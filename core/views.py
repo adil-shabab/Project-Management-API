@@ -9,6 +9,8 @@ from .serializers import LoginSerializer
 from .models import User
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.permissions import IsAuthenticated
+from rest_framework_simplejwt.authentication import JWTAuthentication
+import logging
 
 
 
@@ -47,18 +49,21 @@ class LoginView(APIView):
 
 
 
+# Configure logger
+logger = logging.getLogger(__name__)
 
 class UserProfileView(APIView):
-    permission_classes = [IsAuthenticated]  # Ensure only authenticated users can access this view
+    permission_classes = [IsAuthenticated]  # Ensure the user is authenticated
 
     def get(self, request):
-        # The JWTAuthentication class automatically extracts and validates the token
+        # Debugging: Check if the token is coming in the headers
+        logger.debug(f"Authorization Header: {request.headers.get('Authorization')}")
+
+        # Using JWTAuthentication to authenticate the user
         authentication = JWTAuthentication()
         user, auth = authentication.authenticate(request)
 
-        # Once authenticated, the 'user' object will contain the user details
         if user:
-            # You can return the user's details in the response
             return Response({
                 'username': user.username,
                 'full_name': user.full_name,
@@ -68,4 +73,4 @@ class UserProfileView(APIView):
                 'position': user.position,
             })
         else:
-            return Response({"detail": "User not found or invalid token."}, status=401)
+            return Response({"detail": "User not authenticated."}, status=401)

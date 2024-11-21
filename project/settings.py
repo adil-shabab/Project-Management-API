@@ -48,6 +48,8 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'rest_framework.authtoken',
+    'rest_framework_simplejwt',
+
 ]
 
 
@@ -57,13 +59,13 @@ INSTALLED_APPS = [
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',  # Token-based
-        'rest_framework.authentication.SessionAuthentication',  # Session-based
+        'rest_framework_simplejwt.authentication.JWTAuthentication',  # Only use JWTAuthentication
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
+        'rest_framework.permissions.IsAuthenticated',  # Ensure user is authenticated
     ],
 }
+
 
 
 

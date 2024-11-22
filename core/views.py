@@ -5,7 +5,7 @@ from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.conf import settings
 from rest_framework.permissions import AllowAny
-from .serializers import LoginSerializer
+from .serializers import *
 from .models import User
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.permissions import IsAuthenticated
@@ -15,7 +15,10 @@ from rest_framework.parsers import JSONParser
 from django.contrib.auth import get_user_model
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.core.exceptions import ValidationError
-
+from django.utils.dateparse import parse_datetime
+from django.db.models import Q
+from django.utils.timezone import localdate, make_aware
+from django.utils.timezone import now
 
 
 
@@ -188,3 +191,116 @@ class EditAvatarView(APIView):
         
         except ValidationError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+
+
+
+
+
+
+
+
+
+class CreateTaskForMeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+
+        # Prepare data
+        data = request.data.copy()
+        data['assigned_by'] = user.id  # Current user is the one assigning
+        data['user'] = user.id  # Current user is the task owner
+
+        # Pass the context to include FILES
+        serializer = TaskSerializer(data=data, context={'request': request})
+
+        if serializer.is_valid():
+            task = serializer.save()
+            return Response({
+                "message": "Task created successfully!",
+                "data": serializer.data,
+            }, status=status.HTTP_201_CREATED)
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+
+class UserTasksWithTodayStartDateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Get the logged-in user
+        user = request.user
+
+        # Get today's date
+        today = localdate()
+
+        # Fetch tasks for the logged-in user where start_date is today
+        tasks = Task.objects.filter(
+            Q(user=user) &
+            Q(start_date__date=today)
+        )
+
+        # Serialize the tasks
+        serializer = TaskSerializer(tasks, many=True)
+
+        return Response({
+            "message": "Tasks with today's start date retrieved successfully!",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+
+
+
+
+
+
+class UserPendingTasksView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Get the logged-in user
+        user = request.user
+
+        # Current date and time
+        current_time = now()
+
+        # Fetch tasks for the logged-in user with specified conditions
+        tasks = Task.objects.filter(
+            Q(user=user) &
+            Q(start_date__lt=current_time) &  # Start date is in the past
+            Q(due_date__gt=current_time)    # Due date is in the future
+  
+        )
+
+        # Serialize the tasks
+        serializer = TaskSerializer(tasks, many=True)
+
+        return Response({
+            "message": "Pending tasks retrieved successfully!",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+
+
+class TaskDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, task_id):
+        try:
+            task = Task.objects.get(id=task_id, user=request.user)
+            serializer = TaskSerializer(task)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Task.DoesNotExist:
+            return Response(
+                {"error": "Task not found or you do not have permission to view it."},
+                status=status.HTTP_404_NOT_FOUND,
+            )

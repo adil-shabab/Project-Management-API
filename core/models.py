@@ -60,3 +60,43 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.username
+
+
+
+class Task(models.Model):
+    PRIORITY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+    ]
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('in_review', 'In Review'),
+        ('approved', 'Approved'),
+    ]
+    
+    title = models.CharField(max_length=255)
+    description = models.TextField()
+    due_date = models.DateTimeField()
+    start_date = models.DateTimeField(null=True, blank=True)
+    priority = models.CharField(max_length=6, choices=PRIORITY_CHOICES, default='medium')
+    user = models.ForeignKey(User, related_name='tasks', on_delete=models.CASCADE)  # User who the task is assigned to
+    assigned_by = models.ForeignKey(User, related_name='assigned_tasks', on_delete=models.CASCADE)  # User who assigned the task
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    is_ticket = models.BooleanField(default=False)  # Added boolean field for is_ticket
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+
+
+    def __str__(self):
+        return self.title
+
+
+
+
+class TaskImage(models.Model):
+    task = models.ForeignKey(Task, related_name='images', on_delete=models.CASCADE)
+    image = models.ImageField(upload_to='task_images/')
+    
+    def __str__(self):
+        return f"Image for {self.task.title}"

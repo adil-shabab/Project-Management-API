@@ -19,6 +19,9 @@ from django.utils.dateparse import parse_datetime
 from django.db.models import Q
 from django.utils.timezone import localdate, make_aware
 from django.utils.timezone import now
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from datetime import datetime
 
 
 
@@ -203,30 +206,23 @@ class EditAvatarView(APIView):
 
 
 
-
 class CreateTaskForMeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        user = request.user
+        user = request.user  # Get the logged-in user
 
-        # Prepare data
-        data = request.data.copy()
-        data['assigned_by'] = user.id  # Current user is the one assigning
-        data['user'] = user.id  # Current user is the task owner
-
-        # Pass the context to include FILES
-        serializer = TaskSerializer(data=data, context={'request': request})
+        # Pass the context to include FILES (images) and request context
+        serializer = TaskSerializer(data=request.data, context={'request': request, 'user': user})
 
         if serializer.is_valid():
-            task = serializer.save()
+            task = serializer.save()  # Save the task with the user data
             return Response({
                 "message": "Task created successfully!",
                 "data": serializer.data,
             }, status=status.HTTP_201_CREATED)
         else:
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 
 
@@ -261,7 +257,6 @@ class UserTasksWithTodayStartDateView(APIView):
 
 
 
-
 class UserPendingTasksView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -274,11 +269,14 @@ class UserPendingTasksView(APIView):
 
         # Fetch tasks for the logged-in user with specified conditions
         tasks = Task.objects.filter(
-            Q(user=user) &
-            Q(start_date__lt=current_time) &  # Start date is in the past
-            Q(due_date__gt=current_time)    # Due date is in the future
-  
-        )
+            Q(user=user) & (
+                # Tasks that are ongoing: start_date in the past and due_date in the future
+                Q(start_date__lt=current_time, due_date__gt=current_time) |  
+                
+                # Tasks that are overdue: due_date in the past and status is not 'approved'
+                Q(due_date__lt=current_time)
+            )
+        ).exclude(status='approved')  # Exclude tasks with 'approved' status
 
         # Serialize the tasks
         serializer = TaskSerializer(tasks, many=True)
@@ -287,8 +285,7 @@ class UserPendingTasksView(APIView):
             "message": "Pending tasks retrieved successfully!",
             "data": serializer.data
         }, status=status.HTTP_200_OK)
-
-
+        
 
 
 class TaskDetailView(APIView):
@@ -304,3 +301,117 @@ class TaskDetailView(APIView):
                 {"error": "Task not found or you do not have permission to view it."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+
+
+
+
+
+
+class ChangeTaskStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, task_id):
+        # Get the task by ID
+        task = get_object_or_404(Task, id=task_id, user=request.user)
+
+        # Check if the current status is 'pending'
+        if task.status != 'pending':
+            return Response(
+                {"message": "The task status is not pending, cannot move to review."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Change the task status to 'in_review'
+        task.status = 'in_review'
+        task.review_date = timezone.now()
+        task.save()
+
+        # Serialize the updated task
+        serializer = TaskSerializer(task)
+
+        return Response(
+            {
+                "message": "Task status changed to 'In Review' successfully.",
+                "data": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+
+
+
+
+
+class UserSpecificDateTasksView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, specific_date):
+        # Get the logged-in user
+        user = request.user
+
+        # Convert the specific date (e.g., '25-11-2024') to a datetime object
+        try:
+            specific_date = datetime.strptime(specific_date, '%d-%m-%Y')  # Date format: 'dd-mm-yyyy'
+            specific_date = make_aware(specific_date)  # Make it timezone-aware
+        except ValueError:
+            return Response({"message": "Invalid date format. Please use 'dd-mm-yyyy'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Fetch tasks for the logged-in user that match the criteria:
+        # - Tasks where start_date's date part is less than or equal to the specific date
+        # - Tasks where due_date's date part is greater than or equal to the specific date
+        tasks = Task.objects.filter(
+            user=user,
+            start_date__date__lte=specific_date.date(),  # Use only the date part of start_date
+            due_date__date__gte=specific_date.date()     # Use only the date part of due_date
+        )
+
+        # Serialize the tasks
+        serializer = TaskSerializer(tasks, many=True)
+
+        return Response({
+            "message": "Tasks for the specified date retrieved successfully!",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+
+
+
+
+
+
+
+
+class UserSpecificDateRangeTasksView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, start_date, end_date):
+        # Get the logged-in user
+        user = request.user
+
+        # Convert the start and end dates (e.g., '25-11-2024') to datetime objects
+        try:
+            start_date = datetime.strptime(start_date, '%d-%m-%Y')  # Date format: 'dd-mm-yyyy'
+            start_date = make_aware(start_date)  # Make it timezone-aware
+            end_date = datetime.strptime(end_date, '%d-%m-%Y')  # Date format: 'dd-mm-yyyy'
+            end_date = make_aware(end_date)  # Make it timezone-aware
+        except ValueError:
+            return Response({"message": "Invalid date format. Please use 'dd-mm-yyyy'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Fetch tasks for the logged-in user that match the criteria:
+        # - Tasks where the start_date's date part is on or after the start date
+        # - Tasks where the due_date's date part is on or before the end date
+        tasks = Task.objects.filter(
+            user=user,
+            start_date__date__gte=start_date.date(),  # Use only the date part of start_date
+            due_date__date__lte=end_date.date()       # Use only the date part of due_date
+        )
+
+        # Serialize the tasks
+        serializer = TaskSerializer(tasks, many=True)
+
+        return Response({
+            "message": "Tasks for the specified date range retrieved successfully!",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)

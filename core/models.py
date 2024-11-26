@@ -86,7 +86,8 @@ class Task(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     is_ticket = models.BooleanField(default=False)  # Added boolean field for is_ticket
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
-
+    review_date = models.DateTimeField(null=True, blank=True)
+    approved_date = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return self.title

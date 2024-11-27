@@ -24,6 +24,7 @@ urlpatterns = [
     path('projects/<int:project_id>/add-member/', AddMemberToProjectView.as_view(), name='add-member-to-project'),
     path('users/', UserListView.as_view(), name='user-list'),  # Endpoint to get all users
     path('projects/latest-high-priority/', LatestHighPriorityProjectsView.as_view(), name='latest-high-priority-projects'),
-
-
+    path('notifications/', GetUserNotificationsView.as_view(), name='get_notifications'),
+    path('notifications/mark-as-read/', MarkNotificationAsReadView.as_view(), name='mark_notifications_as_read'),
+    path('notifications/unread/', UnreadNotificationAPIView.as_view(), name='unread_notifications'),
 ]

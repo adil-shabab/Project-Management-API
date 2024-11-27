@@ -296,7 +296,7 @@ class TaskDetailView(APIView):
 
     def get(self, request, task_id):
         try:
-            task = Task.objects.get(id=task_id, user=request.user)
+            task = Task.objects.get(id=task_id)
             serializer = TaskSerializer(task)
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Task.DoesNotExist:
@@ -665,7 +665,7 @@ class AddMemberToProjectView(APIView):
             user=user_to_add,
             message=f"You have been added to the project '{project.title}' as a member.",
             type='project',  # Notification type is 'project'
-            project=project  # Link the notification to the specific project
+            project=project,  # Link the notification to the specific project
         )
 
         #notification___here
@@ -739,3 +739,73 @@ class LatestHighPriorityProjectsView(APIView):
             "message": "Latest high-priority pending projects fetched successfully!",
             "data": project_data
         }, status=status.HTTP_200_OK)
+
+
+
+
+
+
+class GetUserNotificationsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Get the current authenticated user
+        user = request.user
+
+        # Fetch all notifications related to the user, ordered by creation date
+        notifications = Notification.objects.filter(user=user).order_by('-created_at')
+
+        # Serialize the notifications
+        serializer = NotificationSerializer(notifications, many=True)
+
+        # Return the notifications as a response
+        return Response({
+            "message": "Notifications fetched successfully!",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+
+
+
+
+class MarkNotificationAsReadView(APIView):
+    permission_classes = [IsAuthenticated]  # Ensure only authenticated users can mark notifications as read
+
+    def post(self, request):
+        # Get the notification ID(s) from the request data
+        notification_ids = request.data.get('notification_ids', [])
+
+        if not notification_ids:
+            return Response({"message": "No notification IDs provided."}, status=400)
+
+        # Ensure the notifications belong to the current user
+        notifications = Notification.objects.filter(id__in=notification_ids, user=request.user)
+
+        if notifications.exists():
+            # Update the read status of the selected notifications
+            notifications.update(read_status=True)
+            return Response({"message": "Notifications marked as read."}, status=200)
+        else:
+            return Response({"message": "No notifications found."}, status=404)
+
+
+
+
+
+
+
+class UnreadNotificationAPIView(APIView):
+    """
+    API view to check if the authenticated user has any unread notifications.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Get unread notifications for the currently authenticated user
+        unread_notifications = Notification.objects.filter(user=request.user, read_status=False)
+
+        # Return true if there are unread notifications, otherwise false
+        has_unread = unread_notifications.exists()
+
+        return Response({'has_unread': has_unread})

@@ -179,8 +179,6 @@ class TaskImage(models.Model):
 
 
 
-
-
 class Notification(models.Model):
     """
     Model to store notifications for users.
@@ -195,8 +193,9 @@ class Notification(models.Model):
     created_at = models.DateTimeField(default=timezone.now)  # Timestamp of when the notification was created
     read_status = models.BooleanField(default=False)  # To track whether the notification has been read
     type = models.CharField(max_length=10, choices=NOTIFICATION_TYPE_CHOICES)  # Type of notification (task or project)
-    project = models.ForeignKey(Project, on_delete=models.CASCADE,  null=True, blank=True)
-    task = models.ForeignKey(Task, on_delete=models.CASCADE,  null=True, blank=True)
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, null=True, blank=True)
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name="created_notifications")  # Link to the user who created the notification
 
     class Meta:
         ordering = ['-created_at']  # Order notifications by most recent first

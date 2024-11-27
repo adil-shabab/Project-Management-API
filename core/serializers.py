@@ -131,3 +131,17 @@ class TicketTaskSerializer(serializers.ModelSerializer):
             TaskImage.objects.create(task=task, image=image)
 
         return task
+
+
+
+
+
+
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    created_by = UserSerializer(read_only=True)  # The logged-in user who assigns the task
+
+    class Meta:
+        model = Notification
+        fields = ['id', 'message', 'created_by', 'created_at', 'read_status', 'type', 'project', 'task']

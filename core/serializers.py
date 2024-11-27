@@ -53,3 +53,81 @@ class TaskSerializer(serializers.ModelSerializer):
             TaskImage.objects.create(task=task, image=image)
 
         return task
+
+
+
+
+
+
+
+
+
+# ProjectMember Serializer to include user role and details
+class ProjectMemberSerializer(serializers.ModelSerializer):
+    user = UserSerializer()
+    role = serializers.CharField()
+
+
+    class Meta:
+        model = ProjectMember
+        fields = ['user', 'role']
+
+# Project Image Serializer
+class ProjectImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProjectImage
+        fields = ['image']
+
+# Project Serializer to include project details and project members
+class ProjectSerializer(serializers.ModelSerializer):
+    members = ProjectMemberSerializer(many=True)
+    images = ProjectImageSerializer(many=True)
+    team_lead = UserSerializer()  # Nested serializer to get team lead details
+
+
+    class Meta:
+        model = Project
+        fields = ['id', 'title', 'description', 'department', 'client_name', 'due_date', 'start_date', 
+                  'status', 'priority', 'team_lead', 'created_by', 'created_at', 'members', 'images']
+
+
+
+
+
+
+
+
+
+class TicketTaskSerializer(serializers.ModelSerializer):
+    images = TaskImageSerializer(many=True, required=False)
+    assigned_by = UserSerializer(read_only=True)  # The logged-in user who assigns the task
+    user = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())  # The user the task is assigned to
+    project = serializers.PrimaryKeyRelatedField(queryset=Project.objects.all())  # The project the task is associated with
+
+    class Meta:
+        model = Task
+        fields = [
+            'id', 'title', 'approved_date', 'review_date', 'description', 
+            'due_date', 'start_date', 'priority', 'user', 'assigned_by', 
+            'is_ticket', 'status', 'images', 'project'
+        ]
+
+    def create(self, validated_data):
+        # Extract files from the context (if any)
+        images_data = self.context['request'].FILES.getlist('images', [])
+        user = self.context['user']  # The logged-in user making the request (assigned_by)
+
+        # Ensure `assigned_by` is set to the logged-in user
+        validated_data['assigned_by'] = user
+
+        # Ensure `is_ticket` is set to True
+        validated_data['is_ticket'] = True
+
+        # Create the Task object
+        task = Task.objects.create(**validated_data)
+
+        # Save associated images if any
+        for image in images_data:
+            TaskImage.objects.create(task=task, image=image)
+
+        return task

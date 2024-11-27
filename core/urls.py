@@ -16,5 +16,14 @@ urlpatterns = [
     path('tasks/<int:task_id>/change-status/', ChangeTaskStatusView.as_view(), name='change-task-status'),
     path('tasks/date/<str:specific_date>/', UserSpecificDateTasksView.as_view(), name='tasks-specific-date'),
     path('tasks/date-range/<str:start_date>/<str:end_date>/', UserSpecificDateRangeTasksView.as_view(), name='tasks-date-range'),
+    path('projects/', ProjectListView.as_view(), name='project-list'),
+    path('projects/<int:project_id>/', ProjectDetailView.as_view(), name='project-detail'),
+    path('create-ticket/', CreateTicketTaskView.as_view(), name='create_ticket_task'),
+    path('projects/<int:project_id>/tickets/', ProjectTicketsView.as_view(), name='project-tickets'),
+    path('tickets/<int:task_id>/change-status/', ChangeTicketStatusView.as_view(), name='change-task-status'),
+    path('projects/<int:project_id>/add-member/', AddMemberToProjectView.as_view(), name='add-member-to-project'),
+    path('users/', UserListView.as_view(), name='user-list'),  # Endpoint to get all users
+    path('projects/latest-high-priority/', LatestHighPriorityProjectsView.as_view(), name='latest-high-priority-projects'),
+
 
 ]

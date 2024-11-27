@@ -1,4 +1,6 @@
 from django.contrib.auth import authenticate
+from rest_framework import generics
+
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import status
@@ -82,6 +84,7 @@ class UserProfileView(APIView):
                 'department': user.department,
                 'position': user.position,
                 'phone_number': user.phone_number,
+                'id': user.id,
             }
             
             # Only add 'avatar' to the response if it exists
@@ -308,6 +311,7 @@ class TaskDetailView(APIView):
 
 
 class ChangeTaskStatusView(APIView):
+    print("Comuing change task status")
     permission_classes = [IsAuthenticated]
 
     def post(self, request, task_id):
@@ -325,6 +329,8 @@ class ChangeTaskStatusView(APIView):
         task.status = 'in_review'
         task.review_date = timezone.now()
         task.save()
+
+        # notification___here
 
         # Serialize the updated task
         serializer = TaskSerializer(task)
@@ -414,4 +420,322 @@ class UserSpecificDateRangeTasksView(APIView):
         return Response({
             "message": "Tasks for the specified date range retrieved successfully!",
             "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+
+
+
+
+
+class ProjectListView(APIView):
+    """
+    View to list all projects with the percentage of completed tasks.
+    """
+
+    def get(self, request):
+        projects = Project.objects.all()  # Fetch all projects
+
+        # Iterate through each project and calculate the percentage of completed tasks
+        project_data = []
+        for project in projects:
+            # Fetch the tasks that are tickets for this project
+            tasks = Task.objects.filter(project=project, is_ticket=True)
+
+            # Count the tasks with status 'completed', 'in_review', and 'approved'
+            completed_tasks = tasks.filter( Q(status='in_review') | Q(status='approved')).count()
+            pending_tasks = tasks.filter(status='pending').count()
+            total_tasks = tasks.count()
+
+            # Calculate the percentage of completed tasks
+            percentage_completed = 0
+            if total_tasks > 0:
+                percentage_completed = (completed_tasks / total_tasks) * 100
+
+            # Serialize the project data and add the calculated percentage
+            project_serializer = ProjectSerializer(project)
+            project_data.append({
+                **project_serializer.data,
+                'percentage': round(percentage_completed, 2)  # Add the calculated percentage to the response data
+            })
+
+        return Response({
+            "message": "Projects fetched successfully!",
+            "data": project_data
+        }, status=status.HTTP_200_OK)
+
+
+
+
+
+
+
+
+class ProjectDetailView(APIView):
+    """
+    View to get a specific project by its ID with the percentage of completed tasks.
+    """
+
+    def get(self, request, project_id):
+        try:
+            # Fetch the project by ID
+            project = Project.objects.get(id=project_id)
+
+            # Fetch the tasks that are tickets for this project
+            tasks = Task.objects.filter(project=project, is_ticket=True)
+
+            # Count the tasks with status 'completed', 'in_review', and 'approved'
+            completed_tasks = tasks.filter(Q(status='in_review') | Q(status='approved')).count()
+            pending_tasks = tasks.filter(status='pending').count()
+            total_tasks = tasks.count()
+
+            # Calculate the percentage of completed tasks
+            percentage_completed = 0
+            if total_tasks > 0:
+                percentage_completed = (completed_tasks / total_tasks) * 100
+
+            # Serialize the project data and add the calculated percentage
+            project_serializer = ProjectSerializer(project)
+            project_data = {
+                **project_serializer.data,
+                'percentage': round(percentage_completed, 2)  # Add the calculated percentage to the response data
+            }
+
+            return Response({
+                "message": "Project fetched successfully!",
+                "data": project_data
+            }, status=status.HTTP_200_OK)
+
+        except Project.DoesNotExist:
+            return Response({
+                "message": "Project not found."
+            }, status=status.HTTP_404_NOT_FOUND)
+
+
+
+
+# views.py
+class CreateTicketTaskView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user  # Get the logged-in user
+
+        # Initialize the serializer with request data and context
+        serializer = TicketTaskSerializer(data=request.data, context={'request': request, 'user': user})
+
+        if serializer.is_valid():
+            task = serializer.save()  # Save the validated data
+
+            # notification___here
+            return Response({
+                "message": "Ticket created successfully!",
+                "data": serializer.data,
+            }, status=status.HTTP_201_CREATED)
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+
+class ProjectTicketsView(APIView):
+    """
+    View to get all tickets for a project sorted by status, priority, and due date.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, project_id):
+        try:
+            # Get the project
+            project = Project.objects.get(id=project_id)
+            
+            # Get all tasks (tickets) for the project and sort
+            tickets = Task.objects.filter(project=project, is_ticket=True).order_by(
+                '-priority',  # High priority first
+                'due_date',   # Closest due date first
+            )
+
+            # Group tasks by status
+            pending = tickets.filter(status='pending')
+            in_review = tickets.filter(status='in_review')
+            approved = tickets.filter(status='approved')
+
+            # Serialize tasks
+            serializer = TaskSerializer(tickets, many=True)
+            return Response({
+                "message": "Tickets fetched successfully!",
+                "data": {
+                    "pending": TaskSerializer(pending, many=True).data,
+                    "in_review": TaskSerializer(in_review, many=True).data,
+                    "approved": TaskSerializer(approved, many=True).data,
+                },
+            }, status=status.HTTP_200_OK)
+        except Project.DoesNotExist:
+            return Response({"error": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+
+
+
+
+class ChangeTicketStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, task_id):
+        try:
+            # Fetch the task by task_id
+            task = get_object_or_404(Task, id=task_id)
+
+            # Ensure the task belongs to the currently authenticated user
+            if task.status == 'pending':
+                if task.user != request.user:
+                    return Response({"message": "You don't have permission to change this task's status."}, status=status.HTTP_403_FORBIDDEN)
+
+            # Get the status from the request body and ensure it's not None or empty
+            status_value = request.data.get('status', '').lower()
+
+            # Check if status was provided
+            if not status_value:
+                return Response({"message": "Status is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validate if the status is one of the expected statuses
+            if status_value not in ['pending', 'in_review', 'approved']:
+                return Response({"message": "Invalid status provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Check if the status change is allowed
+            if task.status == 'pending' and status_value == 'in_review':
+                task.status = 'in_review'
+                task.review_date = timezone.now()
+                #notification___here
+            elif task.status == 'in_review' and status_value == 'approved':
+                task.status = 'approved'
+                #notification___here
+            else:
+                return Response({"message": "Invalid status transition."}, status=status.HTTP_400_BAD_REQUEST)
+
+            task.save()
+
+            return Response({
+                "message": f"Task status changed to {status_value} successfully.",
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            # Handle unexpected exceptions gracefully
+            return Response({"message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+
+
+class AddMemberToProjectView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, project_id):
+        # Fetch the project by its ID
+        project = get_object_or_404(Project, id=project_id)
+
+        # Ensure the current user is a Team Lead, Manager, or Admin
+        user_role = request.user.role
+        if user_role not in ['Manager', 'Admin'] and request.user != project.team_lead:
+            return Response({"message": "You do not have the required permissions to add a member."}, status=status.HTTP_403_FORBIDDEN)
+
+        # Get the user to be added to the project from the request body
+        user_id = request.data.get('user_id')
+        if not user_id:
+            return Response({"message": "User ID is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Fetch the user to be added
+        user_to_add = get_object_or_404(User, id=user_id)
+
+        if user_to_add == project.team_lead:
+            return Response({"message": "User is already a member of this project. "}, status=status.HTTP_400_BAD_REQUEST)
+
+
+        # Ensure the user is not already a member of the project
+        if ProjectMember.objects.filter(project=project, user=user_to_add).exists():
+            return Response({"message": "User is already a member of this project."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Add the user to the project members
+        ProjectMember.objects.create(project=project, user=user_to_add, role='Staff')  # Default role is 'Staff', can be adjusted if needed
+
+        # Create a notification for the added user
+        Notification.objects.create(
+            user=user_to_add,
+            message=f"You have been added to the project '{project.title}' as a member.",
+            type='project',  # Notification type is 'project'
+            project=project  # Link the notification to the specific project
+        )
+
+        #notification___here
+        return Response({
+            "message": f"User {user_to_add.username} added to the project successfully."
+        }, status=status.HTTP_200_OK)
+
+
+
+
+class UserListView(generics.ListAPIView):
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        # You can customize the queryset, for example, filter users based on their role or department if needed
+        users = self.get_queryset()
+        serializer = self.get_serializer(users, many=True)
+        return Response(serializer.data)
+
+
+
+
+
+class LatestHighPriorityProjectsView(APIView):
+    """
+    View to fetch the latest 3 projects with status 'pending' and priority 'high'.
+    """
+
+    def get(self, request):
+
+        user = request.user
+
+        # Query the projects with status 'pending' and priority 'high', ordered by `created_at`
+
+
+        projects = Project.objects.filter(
+            status='pending',
+        ).filter(
+            Q(team_lead=request.user) | Q(members__user=request.user)
+        ).distinct().order_by('-created_at')[:3]
+
+        project_data = []
+
+        for project in projects:
+            # Fetch the tasks that are tickets for this project
+            tasks = Task.objects.filter(project=project, is_ticket=True)
+
+            # Count the tasks with status 'completed', 'in_review', and 'approved'
+            completed_tasks = tasks.filter( Q(status='in_review') | Q(status='approved')).count()
+            pending_tasks = tasks.filter(status='pending').count()
+            total_tasks = tasks.count()
+
+            # Calculate the percentage of completed tasks
+            percentage_completed = 0
+            if total_tasks > 0:
+                percentage_completed = (completed_tasks / total_tasks) * 100
+
+            # Serialize the project data and add the calculated percentage
+            project_serializer = ProjectSerializer(project)
+            project_data.append({
+                **project_serializer.data,
+                'percentage': round(percentage_completed, 2)  # Add the calculated percentage to the response data
+            })
+
+        # Serialize the projects
+        project_serializer = ProjectSerializer(projects, many=True)
+
+        return Response({
+            "message": "Latest high-priority pending projects fetched successfully!",
+            "data": project_data
         }, status=status.HTTP_200_OK)

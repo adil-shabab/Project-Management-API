@@ -230,6 +230,46 @@ class CreateTaskForMeView(APIView):
 
 
 
+
+class CreateTaskManagerView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user  # Get the logged-in user
+
+
+        # Log the parsed form data
+        print("Parsed form data:", request.data['user'])
+
+        to_user = request.data['user']
+
+        # Check if the user's role is 'Staff'
+        if user.role == 'Staff':
+            return Response({
+                "error": "Permission denied. Staff members are not allowed to create tasks."
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        # Pass the context to include FILES (images) and request context
+        serializer = TaskSerializerManager(data=request.data, context={'request': request, 'user': user, 'to_user': to_user})
+
+        if serializer.is_valid():
+            task = serializer.save()  # Save the task with the user data
+            # Create a notification for the added user
+            Notification.objects.create(
+                user=task.user,
+                message = f"{user.username} has assigned you a new task.",
+                type='task',  # Notification type is 'project'
+                task=task,  # Link the notification to the specific project
+                created_by = user
+            )
+            return Response({
+                "message": "Task created successfully!",
+                "data": serializer.data,
+            }, status=status.HTTP_201_CREATED)
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 class UserTasksWithTodayStartDateView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -266,20 +306,21 @@ class UserPendingTasksView(APIView):
     def get(self, request):
         # Get the logged-in user
         user = request.user
-
-        # Current date and time
-        current_time = now()
+        
+        
+        # Current date (only date part)
+        current_date = now().date()
 
         # Fetch tasks for the logged-in user with specified conditions
         tasks = Task.objects.filter(
             Q(user=user) & (
                 # Tasks that are ongoing: start_date in the past and due_date in the future
-                Q(start_date__lt=current_time, due_date__gt=current_time) |  
+                Q(start_date__date__lte=current_date, due_date__date__gte=current_date) |
                 
                 # Tasks that are overdue: due_date in the past and status is not 'approved'
-                Q(due_date__lt=current_time)
+                Q(due_date__date__lt=current_date)
             )
-        ).exclude(status='approved')  # Exclude tasks with 'approved' status
+        )
 
         # Serialize the tasks
         serializer = TaskSerializer(tasks, many=True)
@@ -331,6 +372,28 @@ class ChangeTaskStatusView(APIView):
         task.save()
 
         # notification___here
+        managers = User.objects.filter(role = 'Manager')
+        Admins = User.objects.filter(role = 'Admin')
+
+        for x in managers:
+            # Create a notification for the added user
+            Notification.objects.create(
+                user=x,
+                message = f"{task.user.username} has been assigned a task to review.",
+                type='task',  # Notification type is 'project'
+                task=task,  # Link the notification to the specific task
+                created_by = task.user
+            )
+
+        for x in Admins:
+            # Create a notification for the added user
+            Notification.objects.create(
+                user=x,
+                message = f"{task.user.username} has been assigned a task to review.",
+                type='task',  # Notification type is 'task'
+                task=task,  # Link the notification to the specific task
+                created_by = task.user
+            )
 
         # Serialize the updated task
         serializer = TaskSerializer(task)
@@ -434,7 +497,11 @@ class ProjectListView(APIView):
     """
 
     def get(self, request):
-        projects = Project.objects.all()  # Fetch all projects
+        projects = Project.objects.filter(
+            Q(team_lead=request.user) | 
+            Q(members__user=request.user) | 
+            Q(created_by=request.user)
+        ).distinct().order_by('due_date')
 
         # Iterate through each project and calculate the percentage of completed tasks
         project_data = []
@@ -465,6 +532,104 @@ class ProjectListView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+
+
+
+class ProjectListView(APIView):
+    """
+    View to list all projects with the percentage of completed tasks.
+    """
+
+    def get(self, request):
+        if request.user.role == 'Admin':
+            # Admins can view all projects
+            projects = Project.objects.all().distinct().order_by('due_date')
+        else:
+            # Non-admin users are filtered by specific conditions
+            projects = Project.objects.filter(
+                Q(team_lead=request.user) |
+                Q(members__user=request.user) |
+                Q(created_by=request.user)
+            ).distinct().order_by('due_date')
+
+        # Iterate through each project and calculate the percentage of completed tasks
+        project_data = []
+        for project in projects:
+            # Fetch the tasks that are tickets for this project
+            tasks = Task.objects.filter(project=project, is_ticket=True)
+
+            # Count the tasks with status 'completed', 'in_review', and 'approved'
+            completed_tasks = tasks.filter( Q(status='in_review') | Q(status='approved')).count()
+            pending_tasks = tasks.filter(status='pending').count()
+            total_tasks = tasks.count()
+
+            # Calculate the percentage of completed tasks
+            percentage_completed = 0
+            if total_tasks > 0:
+                percentage_completed = (completed_tasks / total_tasks) * 100
+
+            # Serialize the project data and add the calculated percentage
+            project_serializer = ProjectSerializer(project)
+            project_data.append({
+                **project_serializer.data,
+                'percentage': round(percentage_completed, 2)  # Add the calculated percentage to the response data
+            })
+
+        return Response({
+            "message": "Projects fetched successfully!",
+            "data": project_data
+        }, status=status.HTTP_200_OK)
+
+
+
+
+
+
+
+class ProjectListView(APIView):
+    """
+    View to list all projects with the percentage of completed tasks.
+    """
+
+    def get(self, request):
+        if request.user.role == 'Admin':
+            # Admins can view all projects
+            projects = Project.objects.all().distinct().order_by('due_date')
+        else:
+            # Non-admin users are filtered by specific conditions
+            projects = Project.objects.filter(
+                Q(team_lead=request.user) |
+                Q(members__user=request.user) |
+                Q(created_by=request.user)
+            ).distinct().order_by('due_date')
+
+        # Iterate through each project and calculate the percentage of completed tasks
+        project_data = []
+        for project in projects:
+            # Fetch the tasks that are tickets for this project
+            tasks = Task.objects.filter(project=project, is_ticket=True)
+
+            # Count the tasks with status 'completed', 'in_review', and 'approved'
+            completed_tasks = tasks.filter( Q(status='in_review') | Q(status='approved')).count()
+            pending_tasks = tasks.filter(status='pending').count()
+            total_tasks = tasks.count()
+
+            # Calculate the percentage of completed tasks
+            percentage_completed = 0
+            if total_tasks > 0:
+                percentage_completed = (completed_tasks / total_tasks) * 100
+
+            # Serialize the project data and add the calculated percentage
+            project_serializer = ProjectSerializer(project)
+            project_data.append({
+                **project_serializer.data,
+                'percentage': round(percentage_completed, 2)  # Add the calculated percentage to the response data
+            })
+
+        return Response({
+            "message": "Projects fetched successfully!",
+            "data": project_data
+        }, status=status.HTTP_200_OK)
 
 
 
@@ -526,6 +691,14 @@ class CreateTicketTaskView(APIView):
 
         if serializer.is_valid():
             task = serializer.save()  # Save the validated data
+
+            Notification.objects.create(
+                user=task.user,
+                message = f"{user.username} has created a ticket for you under the {task.project.title} project.",
+                type='task',  # Notification type is 'task'
+                task=task,  # Link the notification to the specific task
+                created_by = user
+            )
 
             # notification___here
             return Response({
@@ -603,13 +776,75 @@ class ChangeTicketStatusView(APIView):
             if status_value not in ['pending', 'in_review', 'approved']:
                 return Response({"message": "Invalid status provided."}, status=status.HTTP_400_BAD_REQUEST)
 
+
+            # notification___here
+            managers = User.objects.filter(role = 'Manager')
+            Admins = User.objects.filter(role = 'Admin')
+            
             # Check if the status change is allowed
             if task.status == 'pending' and status_value == 'in_review':
                 task.status = 'in_review'
                 task.review_date = timezone.now()
-                #notification___here
+
+                for x in managers:
+                    Notification.objects.create(
+                        user=x,
+                        message = f"{task.user.username} has been assigned a task to review.",
+                        type='task',  # Notification type is 'task'
+                        task=task,  # Link the notification to the specific task
+                        created_by = task.user
+                    )
+
+                for x in Admins:
+                    Notification.objects.create(
+                        user=x,
+                        message = f"{task.user.username} has been assigned a task to review.",
+                        type='task',  # Notification type is 'task'
+                        task=task,  # Link the notification to the specific task
+                        created_by = task.user
+                    )
+                    
             elif task.status == 'in_review' and status_value == 'approved':
                 task.status = 'approved'
+                task.approved_date = timezone.now()
+                Notification.objects.create(
+                    user=task.user,
+                    message = f"{request.user.username} has been approved your task",
+                    type='task',  # Notification type is 'task'
+                    task=task,  # Link the notification to the specific task
+                    created_by = request.user
+                )
+
+                for x in Admins:
+                    Notification.objects.create(
+                        user=x,
+                        message = f"{request.user.username} has been approved {task.user.username}'s task",
+                        type='task',  # Notification type is 'task'
+                        task=task,  # Link the notification to the specific task
+                        created_by = request.user
+                    )
+                #notification___here
+
+            elif task.status == 'in_review' and status_value == 'pending':
+                task.status = 'pending'
+                task.review_date = None
+                
+                Notification.objects.create(
+                    user=task.user,
+                    message = f"{request.user.username} has been rejected your task",
+                    type='task',  # Notification type is 'task'
+                    task=task,  # Link the notification to the specific task
+                    created_by = request.user
+                )
+
+                for x in Admins:
+                    Notification.objects.create(
+                        user=x,
+                        message = f"{request.user.username} has been rejected {task.user.username}'s task",
+                        type='task',  # Notification type is 'task'
+                        task=task,  # Link the notification to the specific task
+                        created_by = request.user
+                    )
                 #notification___here
             else:
                 return Response({"message": "Invalid status transition."}, status=status.HTTP_400_BAD_REQUEST)
@@ -663,9 +898,10 @@ class AddMemberToProjectView(APIView):
         # Create a notification for the added user
         Notification.objects.create(
             user=user_to_add,
-            message=f"You have been added to the project '{project.title}' as a member.",
+            message = f"{request.user.username} has added you as a member to the '{project.title}' project.",
             type='project',  # Notification type is 'project'
             project=project,  # Link the notification to the specific project
+            created_by = request.user
         )
 
         #notification___here
@@ -703,11 +939,20 @@ class LatestHighPriorityProjectsView(APIView):
         # Query the projects with status 'pending' and priority 'high', ordered by `created_at`
 
 
-        projects = Project.objects.filter(
-            status='pending',
-        ).filter(
-            Q(team_lead=request.user) | Q(members__user=request.user)
-        ).distinct().order_by('-created_at')[:3]
+        if request.user.role == 'Admin':
+            # Admins can view all pending projects
+            projects = Project.objects.filter(
+                status='pending'
+            ).order_by('due_date')[:3]
+        else:
+            # Non-admin users are filtered by specific conditions
+            projects = Project.objects.filter(
+                status='pending'
+            ).filter(
+                Q(team_lead=request.user) | 
+                Q(members__user=request.user) | 
+                Q(created_by=request.user)
+            ).distinct().order_by('due_date')[:3]
 
         project_data = []
 
@@ -809,3 +1054,242 @@ class UnreadNotificationAPIView(APIView):
         has_unread = unread_notifications.exists()
 
         return Response({'has_unread': has_unread})
+
+
+
+
+
+
+
+class CreateProjectView(APIView):
+    permission_classes = [IsAuthenticated]  # Only authenticated users can create projects
+
+    def post(self, request):
+        # Check if the user is a staff member and prevent access if they are
+        if request.user.role == 'staff':  # Assuming 'role' is a custom field in your User model
+            return Response({"detail": "You don't have permission to create a project."}, status=status.HTTP_403_FORBIDDEN)
+
+        # Extract data from the request
+        data = request.data
+        print("Received Data:", data)
+
+        members_data = data.get('members', [])
+        images_data = request.FILES.getlist('images')  # Get list of uploaded files (images)
+
+        # Remove 'members' and 'images' from the data before further processing
+        data_to_serializer = {key: value for key, value in data.items() if key not in ['members', 'images']}
+
+        # Validate that 'team_lead' is passed as a valid user ID
+        try:
+            team_lead = User.objects.get(id=int(data_to_serializer['team_lead']))
+        except User.DoesNotExist:
+            return Response({"detail": "Invalid team lead ID."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Ensure that 'created_by' is the logged-in user
+        data_to_serializer['created_by'] = request.user.id
+        data_to_serializer['team_lead'] = team_lead.id  # Store team_lead as an ID
+
+        # Create project serializer with the provided data
+        serializer = ProjectSerializerCreate(data=data_to_serializer)
+        
+        if serializer.is_valid():
+            # Save the project object
+            project = serializer.save()
+
+            # Add project members (if any)
+            for member in members_data:
+                try:
+                    user = User.objects.get(id=int(member))
+                    ProjectMember.objects.create(project=project, user=user)
+                    Notification.objects.create(
+                        user=user,
+                        message = f"{request.user.username} has added you as a member to the '{project.title}' project.",
+                        type='project',  # Notification type is 'task'
+                        task=project,  # Link the notification to the specific task
+                        created_by = request.user
+                    )
+                except User.DoesNotExist:
+                    return Response({"detail": f"Member with ID {member} does not exist."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Add project images (if any)
+            for image in images_data:
+                ProjectImage.objects.create(project=project, image=image)
+
+            return Response({"message": "Project created successfully", "project_id": project.id}, status=status.HTTP_201_CREATED)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+class DeleteProjectView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, project_id):
+        # Check if the project exists
+        try:
+            project = Project.objects.get(id=project_id)
+        except Project.DoesNotExist:
+            return Response({"detail": "Project not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if the logged-in user is the creator or the admin
+        if project.created_by != request.user and not request.user.is_staff:
+            return Response({"detail": "You do not have permission to delete this project."}, status=status.HTTP_403_FORBIDDEN)
+
+        # Delete the project
+        project.delete()
+        return Response({"message": "Project deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
+
+
+
+
+
+class GetUserDetailsView(APIView):
+    permission_classes = [IsAuthenticated]  # Ensure the user is authenticated
+
+    def get(self, request, user_id):
+        # Try to fetch the user with the given user_id
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Serialize the user data
+        serializer = UserSerializer(user)
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+
+
+
+class ProjectListUserView(APIView):
+    """
+    View to list all projects where the specific user is either the team_lead or a member,
+    and include the percentage of completed tasks.
+    """
+
+    def get(self, request):
+        # Get the user_id parameter from the request query
+        user_id = request.query_params.get('user_id', None)
+        
+        if not user_id:
+            return Response({
+                "detail": "user_id parameter is required"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)  # Validate that the user exists
+        except User.DoesNotExist:
+            return Response({
+                "detail": "User not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Query for projects where the user is either the team_lead or a member
+        projects = Project.objects.filter(
+            Q(team_lead=user) | Q(members__user=user)
+        ).distinct().order_by('due_date')
+
+        # Iterate through each project and calculate the percentage of completed tasks
+        project_data = []
+        for project in projects:
+            # Fetch the tasks that are tickets for this project
+            tasks = Task.objects.filter(project=project, is_ticket=True)
+
+            # Count the tasks with status 'completed', 'in_review', and 'approved'
+            completed_tasks = tasks.filter(Q(status='in_review') | Q(status='approved')).count()
+            pending_tasks = tasks.filter(status='pending').count()
+            total_tasks = tasks.count()
+
+            # Calculate the percentage of completed tasks
+            percentage_completed = 0
+            if total_tasks > 0:
+                percentage_completed = (completed_tasks / total_tasks) * 100
+
+            # Serialize the project data and add the calculated percentage
+            project_serializer = ProjectSerializer(project)
+            project_data.append({
+                **project_serializer.data,
+                'percentage': round(percentage_completed, 2)  # Add the calculated percentage to the response data
+            })
+
+        return Response({
+            "message": "Projects fetched successfully!",
+            "data": project_data
+        }, status=status.HTTP_200_OK)
+
+
+
+
+
+
+
+
+
+class UserSpecificDateTasksUserView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, user_id, specific_date):
+        # Ensure that the logged-in user is authorized to access the tasks of the given user
+        if request.user.role == 'Staff':
+            return Response({"message": "You don't have permission to view this user's tasks."}, status=status.HTTP_403_FORBIDDEN)
+
+        # Convert the specific date (e.g., '25-11-2024') to a datetime object
+        try:
+            specific_date = datetime.strptime(specific_date, '%d-%m-%Y')  # Date format: 'dd-mm-yyyy'
+            specific_date = make_aware(specific_date)  # Make it timezone-aware
+        except ValueError:
+            return Response({"message": "Invalid date format. Please use 'dd-mm-yyyy'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Fetch tasks for the specified user that match the criteria:
+        # - Tasks where start_date's date part is less than or equal to the specific date
+        # - Tasks where due_date's date part is greater than or equal to the specific date
+        tasks = Task.objects.filter(
+            user__id=user_id,  # Filter by user ID
+            start_date__date__lte=specific_date.date(),  # Use only the date part of start_date
+            due_date__date__gte=specific_date.date()     # Use only the date part of due_date
+        )
+
+        # Serialize the tasks
+        serializer = TaskSerializer(tasks, many=True)
+
+        return Response({
+            "message": "Tasks for the specified date retrieved successfully!",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+
+
+
+class UserSpecificDateRangeTasksUserView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, user_id, start_date, end_date):
+        # Ensure that the logged-in user is authorized to access the tasks of the given user
+        if request.user.role == 'Staff':
+            return Response({"message": "You don't have permission to view this user's tasks."}, status=status.HTTP_403_FORBIDDEN)
+
+        # Convert the start and end dates (e.g., '25-11-2024') to datetime objects
+        try:
+            start_date = datetime.strptime(start_date, '%d-%m-%Y')  # Date format: 'dd-mm-yyyy'
+            start_date = make_aware(start_date)  # Make it timezone-aware
+            end_date = datetime.strptime(end_date, '%d-%m-%Y')  # Date format: 'dd-mm-yyyy'
+            end_date = make_aware(end_date)  # Make it timezone-aware
+        except ValueError:
+            return Response({"message": "Invalid date format. Please use 'dd-mm-yyyy'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Fetch tasks for the specified user within the date range
+        tasks = Task.objects.filter(
+            user__id=user_id,  # Filter by user ID
+            start_date__date__gte=start_date.date(),  # Tasks that start after the start_date
+            due_date__date__lte=end_date.date()       # Tasks that end before the end_date
+        )
+
+        # Serialize the tasks
+        serializer = TaskSerializer(tasks, many=True)
+
+        return Response({
+            "message": "Tasks for the specified date range retrieved successfully!",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)

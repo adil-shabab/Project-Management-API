@@ -23,11 +23,12 @@ class UserSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = User
-        fields = ['id', 'username', 'full_name', 'avatar']  # Add other fields if needed
+        fields = ['id', 'username', 'full_name', 'avatar', 'email', 'position', 'role', 'phone_number', 'department']  # Add other fields if needed
 
 
 
-class TaskSerializer(serializers.ModelSerializer):
+
+class TaskSerializerManager(serializers.ModelSerializer):
     images = TaskImageSerializer(many=True, required=False)
     assigned_by = UserSerializer(read_only=True)  # To display assigned user info
     user = UserSerializer(read_only=True)  # To display task owner info
@@ -40,10 +41,15 @@ class TaskSerializer(serializers.ModelSerializer):
         # Extract files from the context
         images_data = self.context['request'].FILES.getlist('images', [])
         user = self.context['user']  # Access the user from context
+        to_user = self.context['to_user']  # Access the user from context
+
+        
+        to_user = User.objects.get(id=int(to_user))
+        print(to_user)
 
         # Manually assign user and assigned_by fields
         validated_data['assigned_by'] = user
-        validated_data['user'] = user
+        validated_data['user'] = to_user
 
         # Create the Task object
         task = Task.objects.create(**validated_data)
@@ -53,8 +59,6 @@ class TaskSerializer(serializers.ModelSerializer):
             TaskImage.objects.create(task=task, image=image)
 
         return task
-
-
 
 
 
@@ -77,8 +81,9 @@ class ProjectImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProjectImage
         fields = ['image']
-
-# Project Serializer to include project details and project members
+        
+        
+        
 class ProjectSerializer(serializers.ModelSerializer):
     members = ProjectMemberSerializer(many=True)
     images = ProjectImageSerializer(many=True)
@@ -90,6 +95,14 @@ class ProjectSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'description', 'department', 'client_name', 'due_date', 'start_date', 
                   'status', 'priority', 'team_lead', 'created_by', 'created_at', 'members', 'images']
 
+
+class ProjectSerializerCreate(serializers.ModelSerializer):
+    team_lead = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())  # Expecting an ID, not a full object
+
+    class Meta:
+        model = Project
+        fields = ['id', 'title', 'description', 'department', 'client_name', 'due_date', 'start_date', 
+                  'status', 'priority', 'team_lead', 'created_by', 'created_at']
 
 
 
@@ -127,6 +140,39 @@ class TicketTaskSerializer(serializers.ModelSerializer):
         task = Task.objects.create(**validated_data)
 
         # Save associated images if any
+        for image in images_data:
+            TaskImage.objects.create(task=task, image=image)
+
+        return task
+
+
+
+
+
+
+
+class TaskSerializer(serializers.ModelSerializer):
+    images = TaskImageSerializer(many=True, required=False)
+    assigned_by = UserSerializer(read_only=True)  # To display assigned user info
+    user = UserSerializer(read_only=True)  # To display task owner info
+    project = ProjectSerializer(read_only=True) # To display
+    class Meta:
+        model = Task
+        fields = ['id', 'title', 'approved_date', 'review_date', 'description', 'due_date', 'start_date', 'priority', 'user', 'assigned_by', 'is_ticket', 'status', 'images', 'project']
+
+    def create(self, validated_data):
+        # Extract files from the context
+        images_data = self.context['request'].FILES.getlist('images', [])
+        user = self.context['user']  # Access the user from context
+
+        # Manually assign user and assigned_by fields
+        validated_data['assigned_by'] = user
+        validated_data['user'] = user
+
+        # Create the Task object
+        task = Task.objects.create(**validated_data)
+
+        # Save images related to the task
         for image in images_data:
             TaskImage.objects.create(task=task, image=image)
 

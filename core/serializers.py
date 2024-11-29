@@ -183,6 +183,23 @@ class TaskSerializer(serializers.ModelSerializer):
 
 
 
+class UserCreateSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = User
+        fields = ['username', 'password', 'full_name', 'email', 'phone_number', 'position', 'role', 'department']
+
+    def create(self, validated_data):
+        # Use `create_user` method from UserManager for password hashing
+        password = validated_data.pop('password')
+        user = User.objects.create(**validated_data)
+        user.set_password(password)  # Hash the password
+        user.save()
+        return user
+
+        
+
 
 
 class NotificationSerializer(serializers.ModelSerializer):

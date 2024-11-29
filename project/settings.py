@@ -113,13 +113,17 @@ WSGI_APPLICATION = 'project.wsgi.application'
 CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:8000",  # Replace with your actual domain
     "http://localhost:8000",   # Allow localhost for development
-    'http://localhost:5173'
+    'http://localhost:5173',
+    "http://192.168.0.108:3000",
+    "https://ab59-49-206-132-244.ngrok-free.app"
 ]
 
 CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8000",  # Replace with your actual frontend URL
     "http://localhost:3000",     # Allow localhost for development
-    'http://localhost:5173'
+    'http://localhost:5173',
+    "http://192.168.0.108:3000",
+    "https://ab59-49-206-132-244.ngrok-free.app"
 ]
 
 
@@ -157,20 +161,8 @@ DATABASES = {
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
 
-AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
-]
+AUTH_PASSWORD_VALIDATORS = []
+
 
 
 # Internationalization

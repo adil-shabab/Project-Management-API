@@ -1,6 +1,6 @@
 from django.contrib.auth import authenticate
 from rest_framework import generics
-
+from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import status
@@ -1293,3 +1293,86 @@ class UserSpecificDateRangeTasksUserView(APIView):
             "message": "Tasks for the specified date range retrieved successfully!",
             "data": serializer.data
         }, status=status.HTTP_200_OK)
+
+
+
+
+
+class CreateUserView(APIView):
+    permission_classes = [IsAuthenticated]  # Restrict this view to admin users
+
+    def post(self, request):
+        if request.user.role == 'Staff':
+            return Response({"message": "You don't have permission to create new user."}, status=status.HTTP_403_FORBIDDEN)
+
+        if request.user.role == 'Manager':
+            return Response({"message": "You don't have permission to create new user."}, status=status.HTTP_403_FORBIDDEN)
+
+
+        serializer = UserCreateSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"message": "User created successfully!", "data": serializer.data}, status=status.HTTP_201_CREATED)
+        return Response({"message": "Failed to create user", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+
+class DeleteUserView(APIView):
+    permission_classes = [IsAuthenticated]  # Ensure the user is authenticated
+
+    def delete(self, request, user_id):
+        # Check if the logged-in user is an admin (you can adjust this based on your needs)
+        if request.user.role == 'Staff':
+            return Response({"message": "You don't have permission to delete user."}, status=status.HTTP_403_FORBIDDEN)
+
+        if request.user.role == 'Manager':
+            return Response({"message": "You don't have permission to delete user."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            # Find the user by ID
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Delete the user
+        user.delete()
+
+        return Response({"detail": "User deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
+
+
+
+
+
+class EditUserView(APIView):
+    permission_classes = [IsAuthenticated]  # Ensure the user is authenticated
+
+    def put(self, request, user_id):
+        try:
+            # Get the user object based on the user ID passed
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            raise NotFound(detail="User not found.")
+
+
+        if request.user.role == 'Staff':
+            return Response({"message": "You don't have permission to Edit user."}, status=status.HTTP_403_FORBIDDEN)
+
+        if request.user.role == 'Manager':
+            return Response({"message": "You don't have permission to Edit user."}, status=status.HTTP_403_FORBIDDEN)
+
+
+
+        # Update the fields if they are provided in the request data
+        user.full_name = request.data.get("full_name", user.full_name)
+        user.email = request.data.get("email", user.email)
+        user.phone_number = request.data.get("phone_number", user.phone_number)
+        user.position = request.data.get("position", user.position)
+        user.role = request.data.get("role", user.role)
+        user.department = request.data.get("department", user.department)
+
+        # Save the updated user data
+        user.save()
+
+        return Response({"detail": "User updated successfully."}, status=status.HTTP_200_OK)

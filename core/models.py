@@ -36,10 +36,13 @@ class User(AbstractBaseUser, PermissionsMixin):
     ]
 
     DEPARTMENT_CHOICES = [
-        ('Digital Marketing', 'Digital Marketing'),
-        ('Web Development', 'Web Development'),
         ('Graphic Designing', 'Graphic Designing'),
         ('Social Media', 'Social Media'),
+        ('Digital Marketing', 'Digital Marketing'),
+        ('Video Editing', 'Video Editing'),
+        ('Web Development', 'Web Development'),
+        ('Videography', 'Videography'),
+        ('Photography', 'Photography'),
     ]
 
     full_name = models.CharField(max_length=255)

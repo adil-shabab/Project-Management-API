@@ -115,7 +115,7 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:8000",   # Allow localhost for development
     'http://localhost:5173',
     "http://192.168.0.108:3000",
-    "https://ab59-49-206-132-244.ngrok-free.app"
+    "http://206.189.138.245"
 ]
 
 CORS_ALLOWED_ORIGINS = [
@@ -123,7 +123,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",     # Allow localhost for development
     'http://localhost:5173',
     "http://192.168.0.108:3000",
-    "https://ab59-49-206-132-244.ngrok-free.app"
+    "http://206.189.138.245"
 ]
 
 
@@ -150,12 +150,29 @@ SIMPLE_JWT = {
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
+
+
+
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'thinkbdb',
+        'USER': 'thinkbdbuser',
+        'PASSWORD': 'HACKER@31971a',
+        'HOST': 'localhost',
+        'PORT': '',
     }
 }
+
+
+
 
 
 # Password validation

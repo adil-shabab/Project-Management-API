@@ -116,6 +116,7 @@ CSRF_TRUSTED_ORIGINS = [
     'http://localhost:5173',
     "http://192.168.0.108:3000",
     "http://206.189.138.245"
+    "https://task.thinkb.agency"
 ]
 
 CORS_ALLOWED_ORIGINS = [
@@ -123,6 +124,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",     # Allow localhost for development
     'http://localhost:5173',
     "http://192.168.0.108:3000",
+    "https://task.thinkb.agency"
     "http://206.189.138.245"
 ]
 

@@ -115,7 +115,7 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:8000",   # Allow localhost for development
     'http://localhost:5173',
     "http://192.168.0.108:3000",
-    "http://206.189.138.245",
+    "http://134.209.147.180",
     "https://task.thinkb.agency"
 ]
 
@@ -125,7 +125,7 @@ CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
     "http://192.168.0.108:3000",
     "https://task.thinkb.agency",
-    "http://206.189.138.245"
+    "http://134.209.147.180"
 ]
 
 
@@ -149,6 +149,7 @@ SIMPLE_JWT = {
 }
 
 
+
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
@@ -167,7 +168,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'thinkbdb',
         'USER': 'thinkbdbuser',
-        'PASSWORD': 'HACKER@31971a',
+        'PASSWORD': 'Project#Management123thinkB',
         'HOST': 'localhost',
         'PORT': '',
     }

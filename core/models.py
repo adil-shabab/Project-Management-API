@@ -168,6 +168,37 @@ class Task(models.Model):
 
 
 
+
+
+
+class TaskStatusChange(models.Model):
+    PRIORITY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+    ]
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('in_review', 'In Review'),
+        ('approved', 'Approved'),
+    ]
+
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="tasks")
+    due_date = models.DateTimeField()
+    start_date = models.DateTimeField(null=True, blank=True)
+    priority = models.CharField(max_length=6, choices=PRIORITY_CHOICES, default='medium')
+    created_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    reason = models.TextField(null=True, blank=True)
+    
+    
+    
+    def __str__(self):
+        return self.task.title
+
+
+
+
 class TaskImage(models.Model):
     task = models.ForeignKey(Task, related_name='images', on_delete=models.CASCADE)
     image = models.ImageField(upload_to='task_images/')
@@ -205,3 +236,17 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"Notification for {self.user.username}: {self.message[:50]}..."
+
+
+
+class TaskHistory(models.Model):
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='history')
+    status = models.CharField(max_length=20, choices=Task.STATUS_CHOICES)
+    changed_by = models.ForeignKey(User, on_delete=models.CASCADE)
+    changed_at = models.DateTimeField(auto_now_add=True)
+    notes = models.TextField(blank=True, null=True)  # Additional notes for status change
+    reason = models.TextField(blank=True, null=True)
+
+
+    def __str__(self):
+        return f"{self.task.title} - {self.status} by {self.changed_by.username} at {self.changed_at}"

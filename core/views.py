@@ -371,6 +371,14 @@ class ChangeTaskStatusView(APIView):
         task.review_date = timezone.now()
         task.save()
 
+        TaskHistory.objects.create(
+            task=task,
+            status=task.status,
+            changed_by=request.user,
+            notes=f"Status changed to {task.status}."
+        )
+
+
         # notification___here
         managers = User.objects.filter(role = 'Manager')
         Admins = User.objects.filter(role = 'Admin')
@@ -760,106 +768,208 @@ class ChangeTicketStatusView(APIView):
             # Fetch the task by task_id
             task = get_object_or_404(Task, id=task_id)
 
-            # Ensure the task belongs to the currently authenticated user
-            if task.status == 'pending':
-                if task.user != request.user:
-                    return Response({"message": "You don't have permission to change this task's status."}, status=status.HTTP_403_FORBIDDEN)
+            # Ensure the task belongs to the currently authenticated user (if applicable)
+            if task.status == 'pending' and task.user != request.user:
+                return Response(
+                    {"message": "You don't have permission to change this task's status."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
             # Get the status from the request body and ensure it's not None or empty
             status_value = request.data.get('status', '').lower()
 
             # Check if status was provided
             if not status_value:
-                return Response({"message": "Status is required."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"message": "Status is required."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
             # Validate if the status is one of the expected statuses
-            if status_value not in ['pending', 'in_review', 'approved']:
-                return Response({"message": "Invalid status provided."}, status=status.HTTP_400_BAD_REQUEST)
+            valid_statuses = ['pending', 'in_review', 'approved']
+            if status_value not in valid_statuses:
+                return Response(
+                    {"message": "Invalid status provided."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-
-            # notification___here
-            managers = User.objects.filter(role = 'Manager')
-            Admins = User.objects.filter(role = 'Admin')
-            
-            # Check if the status change is allowed
+            # Handle status transitions
             if task.status == 'pending' and status_value == 'in_review':
+                # Transition from 'pending' to 'in_review'
                 task.status = 'in_review'
                 task.review_date = timezone.now()
 
-                for x in managers:
+                # Notify managers and admins
+                managers = User.objects.filter(role='Manager')
+                admins = User.objects.filter(role='Admin')
+
+                for user in managers.union(admins):
                     Notification.objects.create(
-                        user=x,
-                        message = f"{task.user.username} has been assigned a task to review.",
-                        type='task',  # Notification type is 'task'
-                        task=task,  # Link the notification to the specific task
-                        created_by = task.user
+                        user=user,
+                        message=f"{task.user.username} has submitted a task for review.",
+                        type='task',
+                        task=task,
+                        created_by=task.user
                     )
 
-                for x in Admins:
-                    Notification.objects.create(
-                        user=x,
-                        message = f"{task.user.username} has been assigned a task to review.",
-                        type='task',  # Notification type is 'task'
-                        task=task,  # Link the notification to the specific task
-                        created_by = task.user
-                    )
-                    
             elif task.status == 'in_review' and status_value == 'approved':
+                # Transition from 'in_review' to 'approved'
                 task.status = 'approved'
                 task.approved_date = timezone.now()
+
+                # Notify the task owner and admins
                 Notification.objects.create(
                     user=task.user,
-                    message = f"{request.user.username} has been approved your task",
-                    type='task',  # Notification type is 'task'
-                    task=task,  # Link the notification to the specific task
-                    created_by = request.user
+                    message=f"{request.user.username} has approved your task.",
+                    type='task',
+                    task=task,
+                    created_by=request.user
                 )
 
-                for x in Admins:
+                admins = User.objects.filter(role='Admin')
+                for admin in admins:
                     Notification.objects.create(
-                        user=x,
-                        message = f"{request.user.username} has been approved {task.user.username}'s task",
-                        type='task',  # Notification type is 'task'
-                        task=task,  # Link the notification to the specific task
-                        created_by = request.user
+                        user=admin,
+                        message=f"{request.user.username} has approved {task.user.username}'s task.",
+                        type='task',
+                        task=task,
+                        created_by=request.user
                     )
-                #notification___here
 
             elif task.status == 'in_review' and status_value == 'pending':
+                # Transition from 'in_review' to 'pending'
+                if not request.user.role in ['Manager', 'Admin']:
+                    return Response(
+                        {"message": "Only managers and admins can reject tasks."},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+
+                reason = request.data.get('reason')
+                due_date = request.data.get('due_date')
+
+                # if not reason or not due_date:
+                #     return Response(
+                #         {"message": "Reason and due date are required for rejection."},
+                #         status=status.HTTP_400_BAD_REQUEST
+                #     )
+
                 task.status = 'pending'
-                task.review_date = None
-                
-                Notification.objects.create(
-                    user=task.user,
-                    message = f"{request.user.username} has been rejected your task",
-                    type='task',  # Notification type is 'task'
-                    task=task,  # Link the notification to the specific task
-                    created_by = request.user
+                task.save()
+
+
+                TaskHistory.objects.create(
+                    task=task,
+                    status=task.status,
+                    reason=reason,
+                    changed_by=request.user,
+                    notes=f"Status changed to {task.status}."
                 )
 
-                for x in Admins:
+
+                # Notify the task owner and admins
+                Notification.objects.create(
+                    user=task.user,
+                    message=f"{request.user.username} has rejected your task. Reason: {reason}",
+                    type='task',
+                    task=task,
+                    created_by=request.user
+                )
+
+                admins = User.objects.filter(role='Admin')
+                for admin in admins:
                     Notification.objects.create(
-                        user=x,
-                        message = f"{request.user.username} has been rejected {task.user.username}'s task",
-                        type='task',  # Notification type is 'task'
-                        task=task,  # Link the notification to the specific task
-                        created_by = request.user
+                        user=admin,
+                        message=f"{request.user.username} has rejected {task.user.username}'s task. Reason: {reason}",
+                        type='task',
+                        task=task,
+                        created_by=request.user
                     )
-                #notification___here
+
+            elif task.status == 'rejected' and status_value == 'pending':
+                # Transition from 'rejected' to 'reopened'
+                task.status = 'pending'
+                task.save()
+
+                # Notify the task owner and admins
+                Notification.objects.create(
+                    user=task.user,
+                    message=f"{request.user.username} has reopened your task.",
+                    type='task',
+                    task=task,
+                    created_by=request.user
+                )
+
+                admins = User.objects.filter(role='Admin')
+                for admin in admins:
+                    Notification.objects.create(
+                        user=admin,
+                        message=f"{request.user.username} has reopened {task.user.username}'s task.",
+                        type='task',
+                        task=task,
+                        created_by=request.user
+                    )
+
+
+            elif task.status == 'approved' and status_value == 'pending':
+                # Transition from 'in_review' to 'approved'
+
+                reason = request.data.get('reason')
+                due_date = request.data.get('due_date')
+
+                # if not reason or not due_date:
+                #     return Response(
+                #         {"message": "Reason and due date are required for rejection."},
+                #         status=status.HTTP_400_BAD_REQUEST
+                #     )
+
+                task.status = 'pending'
+                task.approved_date = timezone.now()
+
+                # Notify the task owner and admins
+                Notification.objects.create(
+                    user=task.user,
+                    message=f"{request.user.username} has reopened your task.",
+                    type='task',
+                    task=task,
+                    created_by=request.user
+                )
+
+                admins = User.objects.filter(role='Admin')
+                for admin in admins:
+                    Notification.objects.create(
+                        user=admin,
+                        message=f"{request.user.username} has reopened {task.user.username}'s task.",
+                        type='task',
+                        task=task,
+                        created_by=request.user
+                    )
             else:
-                return Response({"message": "Invalid status transition."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"message": "Invalid status transition."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Log the status change in TaskHistory
+            TaskHistory.objects.create(
+                task=task,
+                status=task.status,
+                changed_by=request.user,
+                notes=f"Status changed to {task.status}."
+            )
 
             task.save()
 
-            return Response({
-                "message": f"Task status changed to {status_value} successfully.",
-            }, status=status.HTTP_200_OK)
+            return Response(
+                {"message": f"Task status changed to {status_value} successfully."},
+                status=status.HTTP_200_OK
+            )
 
         except Exception as e:
             # Handle unexpected exceptions gracefully
-            return Response({"message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
+            return Response(
+                {"message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 
@@ -1105,7 +1215,7 @@ class CreateProjectView(APIView):
                         user=user,
                         message = f"{request.user.username} has added you as a member to the '{project.title}' project.",
                         type='project',  # Notification type is 'task'
-                        task=project,  # Link the notification to the specific task
+                        project=project,  # Link the notification to the specific task
                         created_by = request.user
                     )
                 except User.DoesNotExist:
@@ -1376,3 +1486,13 @@ class EditUserView(APIView):
         user.save()
 
         return Response({"detail": "User updated successfully."}, status=status.HTTP_200_OK)
+
+
+
+
+
+class TaskHistoryView(APIView):
+    def get(self, request, task_id):
+        task_history = TaskHistory.objects.filter(task_id=task_id).order_by('-changed_at')
+        serializer = TaskHistorySerializer(task_history, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)

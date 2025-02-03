@@ -149,8 +149,6 @@ class TicketTaskSerializer(serializers.ModelSerializer):
 
 
 
-
-
 class TaskSerializer(serializers.ModelSerializer):
     images = TaskImageSerializer(many=True, required=False)
     assigned_by = UserSerializer(read_only=True)  # To display assigned user info
@@ -185,6 +183,7 @@ class TaskSerializer(serializers.ModelSerializer):
 
 class UserCreateSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
+    
 
     class Meta:
         model = User
@@ -208,3 +207,11 @@ class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = ['id', 'message', 'created_by', 'created_at', 'read_status', 'type', 'project', 'task']
+
+
+
+class TaskHistorySerializer(serializers.ModelSerializer):
+    changed_by = UserSerializer(read_only=True)  # To display task owner info
+    class Meta:
+        model = TaskHistory
+        fields = ['id', 'task', 'status', 'changed_by', 'changed_at', 'notes', 'reason']

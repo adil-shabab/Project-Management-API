@@ -37,4 +37,5 @@ urlpatterns = [
     path('create-user/', CreateUserView.as_view(), name='create_user'),
     path('delete_user/<int:user_id>/', DeleteUserView.as_view(), name='delete_user'),
     path('edit_user/<int:user_id>/', EditUserView.as_view(), name='edit_user'),
+    path('tasks/<int:task_id>/history/', TaskHistoryView.as_view(), name='task-history'),
 ]

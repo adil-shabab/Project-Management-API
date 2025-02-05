@@ -799,6 +799,15 @@ class ChangeTicketStatusView(APIView):
                 task.status = 'in_review'
                 task.review_date = timezone.now()
 
+                # Log the status change in TaskHistory
+                TaskHistory.objects.create(
+                    task=task,
+                    status=task.status,
+                    changed_by=request.user,
+                    notes=f"Status changed to {task.status}."
+                )
+
+
                 # Notify managers and admins
                 managers = User.objects.filter(role='Manager')
                 admins = User.objects.filter(role='Admin')
@@ -816,6 +825,15 @@ class ChangeTicketStatusView(APIView):
                 # Transition from 'in_review' to 'approved'
                 task.status = 'approved'
                 task.approved_date = timezone.now()
+
+                # Log the status change in TaskHistory
+                TaskHistory.objects.create(
+                    task=task,
+                    status=task.status,
+                    changed_by=request.user,
+                    notes=f"Status changed to {task.status}."
+                )
+
 
                 # Notify the task owner and admins
                 Notification.objects.create(
@@ -935,13 +953,6 @@ class ChangeTicketStatusView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Log the status change in TaskHistory
-            TaskHistory.objects.create(
-                task=task,
-                status=task.status,
-                changed_by=request.user,
-                notes=f"Status changed to {task.status}."
-            )
 
             task.save()
 

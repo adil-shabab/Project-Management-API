@@ -885,30 +885,6 @@ class ChangeTicketStatusView(APIView):
                         created_by=request.user
                     )
 
-            elif task.status == 'rejected' and status_value == 'pending':
-                # Transition from 'rejected' to 'reopened'
-                task.status = 'pending'
-                task.save()
-
-                # Notify the task owner and admins
-                Notification.objects.create(
-                    user=task.user,
-                    message=f"{request.user.username} has reopened your task.",
-                    type='task',
-                    task=task,
-                    created_by=request.user
-                )
-
-                admins = User.objects.filter(role='Admin')
-                for admin in admins:
-                    Notification.objects.create(
-                        user=admin,
-                        message=f"{request.user.username} has reopened {task.user.username}'s task.",
-                        type='task',
-                        task=task,
-                        created_by=request.user
-                    )
-
 
             elif task.status == 'approved' and status_value == 'pending':
                 # Transition from 'in_review' to 'approved'
@@ -925,10 +901,20 @@ class ChangeTicketStatusView(APIView):
                 task.status = 'pending'
                 task.approved_date = timezone.now()
 
+                TaskHistory.objects.create(
+                    task=task,
+                    status=task.status,
+                    reason=reason,
+                    changed_by=request.user,
+                    notes=f"Status changed to {task.status}."
+                )
+
+
+
                 # Notify the task owner and admins
                 Notification.objects.create(
                     user=task.user,
-                    message=f"{request.user.username} has reopened your task.",
+                    message=f"{request.user.username} has reopened your task. Reason: {reason}",
                     type='task',
                     task=task,
                     created_by=request.user
@@ -938,7 +924,7 @@ class ChangeTicketStatusView(APIView):
                 for admin in admins:
                     Notification.objects.create(
                         user=admin,
-                        message=f"{request.user.username} has reopened {task.user.username}'s task.",
+                        message=f"{request.user.username} has reopened {task.user.username}'s task. Reason: {reason}",
                         type='task',
                         task=task,
                         created_by=request.user

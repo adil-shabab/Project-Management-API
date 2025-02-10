@@ -1478,8 +1478,13 @@ class EditUserView(APIView):
         user.position = request.data.get("position", user.position)
         user.role = request.data.get("role", user.role)
         user.department = request.data.get("department", user.department)
+        user.department = request.data.get("department", user.department)
 
-        # Save the updated user data
+        # Handle password update (if provided)
+        password = request.data.get("password")
+        if password:
+            user.set_password(password)  # Hash the password before saving
+
         user.save()
 
         return Response({"detail": "User updated successfully."}, status=status.HTTP_200_OK)

@@ -1478,7 +1478,6 @@ class EditUserView(APIView):
         user.position = request.data.get("position", user.position)
         user.role = request.data.get("role", user.role)
         user.department = request.data.get("department", user.department)
-        user.department = request.data.get("department", user.department)
 
         # Handle password update (if provided)
         password = request.data.get("password")

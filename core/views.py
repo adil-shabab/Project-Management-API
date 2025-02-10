@@ -1471,6 +1471,11 @@ class EditUserView(APIView):
 
 
 
+        # Print the old hashed password before updating
+        print("Before update - Hashed Password:", user.password)
+
+
+
         # Update the fields if they are provided in the request data
         user.full_name = request.data.get("full_name", user.full_name)
         user.email = request.data.get("email", user.email)
@@ -1478,13 +1483,22 @@ class EditUserView(APIView):
         user.position = request.data.get("position", user.position)
         user.role = request.data.get("role", user.role)
         user.department = request.data.get("department", user.department)
+        user.username = request.data.get("username", user.username)
 
         # Handle password update (if provided)
         password = request.data.get("password")
+        print("Password", password)
+
+
         if password:
             user.set_password(password)  # Hash the password before saving
 
+
         user.save()
+
+        # Print the new hashed password
+        print("After update - Hashed Password:", user.password)
+
 
         return Response({"detail": "User updated successfully."}, status=status.HTTP_200_OK)
 

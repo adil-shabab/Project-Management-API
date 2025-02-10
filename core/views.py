@@ -1511,3 +1511,26 @@ class TaskHistoryView(APIView):
         task_history = TaskHistory.objects.filter(task_id=task_id).order_by('-changed_at')
         serializer = TaskHistorySerializer(task_history, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]  # Only authenticated users can change their password
+
+    def post(self, request):
+        # Get the current user
+        user = request.user
+
+        # Get the new password from the request data
+        new_password = request.data.get("new_password")
+
+        if not new_password:
+            return Response({"message": "New password is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Set the new password
+        user.set_password(new_password)  # Hash the new password before saving
+        user.save()
+
+        return Response({"message": "Password changed successfully."}, status=status.HTTP_200_OK)

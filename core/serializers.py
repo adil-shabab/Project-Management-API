@@ -20,7 +20,7 @@ class UserSerializer(serializers.ModelSerializer):
     """
     Serializer for the User model to include user details.
     """
-    password = serializers.CharField(write_only=False)  # Ensure password is write-only and optional
+    password = serializers.CharField(write_only=True, required=False)  # Password is write-only
 
     class Meta:
         model = User
@@ -29,6 +29,12 @@ class UserSerializer(serializers.ModelSerializer):
             'position', 'role', 'phone_number', 'department', 'password'
         ]
 
+    def to_representation(self, instance):
+        """Customize response to hide the hashed password"""
+        data = super().to_representation(instance)
+        data['password'] = "********"  # Hide the hashed password
+        return data
+        
 
 class TaskSerializerManager(serializers.ModelSerializer):
     images = TaskImageSerializer(many=True, required=False)

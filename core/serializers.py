@@ -16,20 +16,18 @@ class TaskImageSerializer(serializers.ModelSerializer):
         fields = ['image']
 
 
-
 class UserSerializer(serializers.ModelSerializer):
     """
     Serializer for the User model to include user details.
     """
-
-    password = serializers.CharField(write_only=True)  # Ensure password is write-only
-
+    password = serializers.CharField(write_only=True, required=False)  # Ensure password is write-only and optional
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'full_name', 'avatar', 'email', 'position', 'role', 'phone_number', 'department', 'password']  # Add other fields if needed
-
-
+        fields = [
+            'id', 'username', 'full_name', 'avatar', 'email', 
+            'position', 'role', 'phone_number', 'department', 'password'
+        ]
 
 
 class TaskSerializerManager(serializers.ModelSerializer):

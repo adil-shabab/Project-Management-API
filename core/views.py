@@ -85,6 +85,7 @@ class UserProfileView(APIView):
                 'position': user.position,
                 'phone_number': user.phone_number,
                 'id': user.id,
+                'user_id': user.user_id,
             }
             
             # Only add 'avatar' to the response if it exists

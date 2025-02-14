@@ -43,6 +43,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         ('Web Development', 'Web Development'),
         ('Videography', 'Videography'),
         ('Photography', 'Photography'),
+        ('Management', 'Management'),
+        ('Content Writing', 'Content Writing'),
     ]
 
     full_name = models.CharField(max_length=255)

@@ -25,7 +25,7 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'id', 'username', 'full_name', 'avatar', 'email', 
+            'id', 'username', 'full_name', 'avatar', 'email', 'user_id',
             'position', 'role', 'phone_number', 'department', 'password'
         ]
 
@@ -195,7 +195,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['username', 'password', 'full_name', 'email', 'phone_number', 'position', 'role', 'department']
+        fields = ['username', 'user_id', 'password', 'full_name', 'email', 'phone_number', 'position', 'role', 'department']
 
     def create(self, validated_data):
         # Use `create_user` method from UserManager for password hashing

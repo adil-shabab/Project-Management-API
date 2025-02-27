@@ -8,13 +8,12 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.conf import settings
 from rest_framework.permissions import AllowAny
 from .serializers import *
-from .models import User
+from .models import *
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 import logging
 from rest_framework.parsers import JSONParser
-from django.contrib.auth import get_user_model
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.core.exceptions import ValidationError
 from django.utils.dateparse import parse_datetime
@@ -24,7 +23,366 @@ from django.utils.timezone import now
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from datetime import datetime
+import face_recognition
+import numpy as np
+from rest_framework.response import Response
+from rest_framework.decorators import api_view
+from django.utils.timezone import now
+from geopy.distance import geodesic
+import json
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.utils import timezone
+import base64
+import face_recognition
+from io import BytesIO
+from PIL import Image
+import numpy as np
+from .models import Attendance, FaceEncoding
+import pytz
 
+
+
+# Office Location (latitude, longitude)
+OFFICE_COORDINATES = (13.002685534417267, 77.6613268167425)  # Example location
+
+@csrf_exempt
+def register_face(request):
+    if request.method == "POST":
+        try:
+            print("Coming Here")
+            # Parse JSON data from request
+            data = request.POST if request.POST else request.body.decode('utf-8')
+            if isinstance(data, str):
+                import json
+                data = json.loads(data)
+            
+            user_id = data.get("user_id")
+            print(user_id)
+            face_image = data.get("face_image")
+
+            if not user_id or not face_image:
+                return JsonResponse({"error": "Missing user_id or face_image"}, status=400)
+
+            # Get user from database
+            try:
+                user = User.objects.get(id=user_id)
+                print(user)
+            except User.DoesNotExist:
+                return JsonResponse({"error": "User not found"}, status=404)
+
+            # Decode base64 image (remove "data:image/jpeg;base64," prefix if present)
+            if "," in face_image:
+                face_image = face_image.split(",")[1]
+            image_data = base64.b64decode(face_image)
+            image = Image.open(BytesIO(image_data)).convert("RGB")
+            image_array = np.array(image)
+
+            # Extract face encoding
+            encodings = face_recognition.face_encodings(image_array)
+            if not encodings:
+                return JsonResponse({"error": "No face detected in the image"}, status=400)
+
+            encoding = encodings[0]  # Assume one face per image
+
+            # Store or update face encoding
+            face_encoding, created = FaceEncoding.objects.get_or_create(user=user)
+            face_encoding.set_encoding(encoding)
+            face_encoding.save()
+
+            return JsonResponse({"message": "Face registered successfully"})
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+    return JsonResponse({"error": "Invalid request method"}, status=405)
+
+
+
+
+
+@csrf_exempt
+def punch_in(request):
+    if request.method == "POST":
+        try:
+            data = request.POST if request.POST else json.loads(request.body.decode('utf-8'))
+            user_id = data.get("user_id")
+            face_image = data.get("face_image")
+            location = data.get("location")
+            reason = data.get("reason", "")  # Reason from frontend
+
+            if not user_id or not face_image:
+                return JsonResponse({"error": "Missing user_id or face_image"}, status=400)
+
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return JsonResponse({"error": "User not found"}, status=404)
+
+            # Check if user has already punched in today
+            ist = pytz.timezone("Asia/Kolkata")
+            today = timezone.now().astimezone(ist).date()
+            existing_attendance = Attendance.objects.filter(
+                user=user,
+                date=today,
+                punch_in_time__isnull=False  # Already punched in
+            ).first()
+
+            if existing_attendance:
+                # Return existing punch-in details with ISO format including timezone
+                punch_in_time_ist = existing_attendance.punch_in_time.astimezone(ist)
+                return JsonResponse({
+                    "message": "Already punched in today",
+                    "location": existing_attendance.punch_in_location,
+                    "punch_in_time": punch_in_time_ist.isoformat(),  # ISO format with timezone (e.g., "2025-02-25T15:34:19+05:30")
+                    "work_type": existing_attendance.work_type,
+                    "status_punchin": existing_attendance.status_punchin,
+                    "reason": existing_attendance.reason
+                })
+
+            if "," in face_image:
+                face_image = face_image.split(",")[1]
+            image_data = base64.b64decode(face_image)
+            image = Image.open(BytesIO(image_data)).convert("RGB")
+            image_array = np.array(image)
+
+            punch_in_encodings = face_recognition.face_encodings(image_array)
+            if not punch_in_encodings:
+                return JsonResponse({"error": "No face detected in the image"}, status=400)
+            punch_in_encoding = punch_in_encodings[0]
+
+            try:
+                stored_encoding = FaceEncoding.objects.get(user=user).get_encoding()
+            except FaceEncoding.DoesNotExist:
+                return JsonResponse({"error": "Face not registered for this user"}, status=400)
+
+            matches = face_recognition.compare_faces([stored_encoding], punch_in_encoding)
+            if not matches[0]:
+                return JsonResponse({"error": "Face verification failed"}, status=403)
+
+            OFFICE_RADIUS_KM = 1  # 1 kilometer radius
+            work_type = "WFH"  # Default to WFH
+            status_punchin = "On Time"
+            status_punchout = "Absent"  # Default until punch-out occurs
+            status = "On Time"
+
+            if location != "Unknown" and location != "Location access denied":
+                lat, lon = map(float, location.split(", "))
+                user_location = (lat, lon)
+                distance_km = geodesic(user_location, OFFICE_COORDINATES).kilometers
+                print(f"Distance: {distance_km} km")
+                print(f"Office Radius: {OFFICE_RADIUS_KM} km")
+
+                if distance_km <= OFFICE_RADIUS_KM:
+                    work_type = "WFO"
+                    print("Setting work_type to WFO")
+                else:
+                    work_type = "WFH"
+                    print("Setting work_type to WFH")
+
+            print(f"Work type before saving: {work_type}")
+
+            punch_in_time = timezone.now().astimezone(ist)
+            print("Hello")
+            print(f"Punch-in time (IST): {punch_in_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+            punch_in_hour = punch_in_time.hour
+            punch_in_minute = punch_in_time.minute
+            if punch_in_hour > 9 or (punch_in_hour == 9 and punch_in_minute > 30):
+                status_punchin = "Late"
+                status = "Punched in Late"
+            else:
+                status_punchin = "On Time"
+                status = "On Time"
+
+            print(f"Status punchin: {status_punchin}")
+
+            attendance, created = Attendance.objects.get_or_create(
+                user=user,
+                date=punch_in_time.date(),
+                defaults={
+                    "punch_in_time": punch_in_time,
+                    "punch_in_location": location,
+                    "work_type": work_type,
+                    "face_verified": True,
+                    "status_punchin": status_punchin,
+                    "status_punchout": status_punchout,
+                    "reason": reason if work_type == "WFH" else None,
+                    "status": status
+                }
+            )
+
+            if not created:
+                attendance.punch_in_time = punch_in_time
+                attendance.punch_in_location = location
+                attendance.work_type = work_type
+                attendance.face_verified = True
+                attendance.status_punchin = status_punchin
+                attendance.status_punchout = status_punchout
+                attendance.reason = reason if work_type == "WFH" else None
+                attendance.status = status
+                attendance.save()
+
+            print(f"Work type after saving: {attendance.work_type}")
+
+            # Return punch-in details with ISO format including timezone
+            punch_in_time_ist = attendance.punch_in_time.astimezone(ist)
+            return JsonResponse({
+                "message": "Punched in successfully",
+                "location": attendance.punch_in_location,
+                "punch_in_time": punch_in_time_ist.isoformat(),  # ISO format with timezone (e.g., "2025-02-25T15:34:19+05:30")
+                "work_type": attendance.work_type,
+                "status_punchin": attendance.status_punchin,
+                "reason": attendance.reason
+            })
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+    return JsonResponse({"error": "Invalid request method"}, status=405)
+
+
+@csrf_exempt
+def punch_out(request):
+    if request.method == "POST":
+        try:
+            data = request.POST if request.POST else json.loads(request.body.decode('utf-8'))
+            user_id = data.get("user_id")
+            face_image = data.get("face_image")
+            location = data.get("location")
+
+            if not user_id or not face_image:
+                return JsonResponse({"error": "Missing user_id or face_image"}, status=400)
+
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return JsonResponse({"error": "User not found"}, status=404)
+
+            # Get today's attendance record for the user
+            ist = pytz.timezone("Asia/Kolkata")
+            today = timezone.now().astimezone(ist).date()
+            attendance = Attendance.objects.filter(
+                user=user,
+                date=today,
+                punch_in_time__isnull=False  # Ensure user has punched in
+            ).first()
+
+            if not attendance:
+                return JsonResponse({"error": "No punch-in record found for today"}, status=400)
+
+            # Check if user has already punched out
+            if attendance.punch_out_time:
+                punch_out_time_ist = attendance.punch_out_time.astimezone(ist)
+                return JsonResponse({
+                    "message": "Already punched out today",
+                    "location": attendance.punch_out_location,
+                    "punch_out_time": punch_out_time_ist.isoformat(),  # ISO format with timezone (e.g., "2025-02-25T18:30:00+05:30")
+                    "work_type": attendance.work_type,
+                    "status_punchout": attendance.status_punchout
+                })
+
+            # Process face image for verification
+            if "," in face_image:
+                face_image = face_image.split(",")[1]
+            image_data = base64.b64decode(face_image)
+            image = Image.open(BytesIO(image_data)).convert("RGB")
+            image_array = np.array(image)
+
+            punch_out_encodings = face_recognition.face_encodings(image_array)
+            if not punch_out_encodings:
+                return JsonResponse({"error": "No face detected in the image"}, status=400)
+            punch_out_encoding = punch_out_encodings[0]
+
+            try:
+                stored_encoding = FaceEncoding.objects.get(user=user).get_encoding()
+            except FaceEncoding.DoesNotExist:
+                return JsonResponse({"error": "Face not registered for this user"}, status=400)
+
+            matches = face_recognition.compare_faces([stored_encoding], punch_out_encoding)
+            if not matches[0]:
+                return JsonResponse({"error": "Face verification failed"}, status=403)
+
+            # Determine work type based on location (similar to punch-in)
+            OFFICE_RADIUS_KM = 1  # 1 kilometer radius
+            work_type = attendance.work_type  # Retain the work type from punch-in
+
+            # Update punch-out time and determine status based on 6:30 PM IST
+            punch_out_time = timezone.now().astimezone(ist)
+            punch_out_hour = punch_out_time.hour
+            punch_out_minute = punch_out_time.minute
+
+            # Define 6:30 PM IST
+            target_hour = 18  # 6 PM
+            target_minute = 30  # 30 minutes
+
+            if punch_out_hour < target_hour or (punch_out_hour == target_hour and punch_out_minute < target_minute):
+                status_punchout = "Early Leaving"  # Before 6:30 PM
+            elif punch_out_hour > target_hour or (punch_out_hour == target_hour and punch_out_minute > target_minute):
+                status_punchout = "Late"  # After 6:30 PM
+            else:
+                status_punchout = "On Time"  # Exactly 6:30 PM
+
+            # Check location for WFO punch-outs (optional additional validation)
+            if location != "Unknown" and location != "Location access denied":
+                lat, lon = map(float, location.split(", "))
+                user_location = (lat, lon)
+                distance_km = geodesic(user_location, OFFICE_COORDINATES).kilometers
+
+                if distance_km > OFFICE_RADIUS_KM and work_type == "WFO":
+                    status_punchout = "Early Leaving"  # If punching out far from office while WFO, mark as early
+
+            # Update attendance with punch-out details
+            attendance.punch_out_time = punch_out_time
+            attendance.punch_out_location = location
+            attendance.status_punchout = status_punchout
+            attendance.save()
+
+            # Return punch-out details with ISO format including timezone
+            punch_out_time_ist = attendance.punch_out_time.astimezone(ist)
+            return JsonResponse({
+                "message": "Punched out successfully",
+                "location": attendance.punch_out_location,
+                "punch_out_time": punch_out_time_ist.isoformat(),  # ISO format with timezone (e.g., "2025-02-25T18:30:00+05:30")
+                "work_type": attendance.work_type,
+                "status_punchout": attendance.status_punchout
+            })
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+    return JsonResponse({"error": "Invalid request method"}, status=405)
+
+
+
+@csrf_exempt
+def is_punched_in(request):
+    if request.method == "POST":
+        try:
+            data = request.POST if request.POST else json.loads(request.body.decode('utf-8'))
+            user_id = data.get("user_id")
+
+            if not user_id:
+                return JsonResponse({"error": "Missing user_id"}, status=400)
+
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return JsonResponse({"error": "User not found"}, status=404)
+
+            # Check if user has punched in today but not punched out
+            ist = pytz.timezone("Asia/Kolkata")
+            today = timezone.now().astimezone(ist).date()
+            attendance = Attendance.objects.filter(
+                user=user,
+                date=today,
+                punch_in_time__isnull=False,  # Has punched in
+                punch_out_time__isnull=True   # Has not punched out
+            ).first()
+
+            is_punched_in = bool(attendance)  # True if punched in and not out, False otherwise
+
+            return JsonResponse({
+                "is_punched_in": is_punched_in,
+                "message": "Punch-in status checked successfully"
+            })
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+    return JsonResponse({"error": "Invalid request method"}, status=405)
 
 
 class LoginView(APIView):
@@ -51,6 +409,7 @@ class LoginView(APIView):
                     "detail": "Login successful",
                     "access_token": str(refresh.access_token),
                     "refresh_token": str(refresh),
+                    "user_id": user.id,
                 }, status=status.HTTP_200_OK)
 
             return Response({"detail": "Invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
@@ -101,7 +460,6 @@ class UserProfileView(APIView):
 
 
 
-User = get_user_model()
 class EditProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1535,3 +1893,59 @@ class ChangePasswordView(APIView):
         user.save()
 
         return Response({"message": "Password changed successfully."}, status=status.HTTP_200_OK)
+
+
+
+
+@csrf_exempt
+def create_holiday(request):
+    if request.method == "POST":
+        try:
+            # Get the current user
+            user = request.user
+
+            # Check if the user is an Admin or Manager
+            if user.role not in ['Admin', 'Manager']:
+                return JsonResponse({"error": "Permission denied. Only Admins and Managers can create holidays."}, status=403)
+
+            # Parse the JSON data from the request body
+            data = json.loads(request.body.decode('utf-8'))
+            date = data.get("date")
+            name = data.get("name")
+            description = data.get("description", "")  # Optional field
+
+            # Validate input
+            if not date or not name:
+                return JsonResponse({"error": "Date and name are required fields"}, status=400)
+
+            # Parse and validate the date
+            try:
+                holiday_date = timezone.datetime.strptime(date, "%Y-%m-%d").date()
+            except ValueError:
+                return JsonResponse({"error": "Invalid date format. Use YYYY-MM-DD."}, status=400)
+
+            # Check if the date is unique (no duplicate holidays)
+            if Holiday.objects.filter(date=holiday_date).exists():
+                return JsonResponse({"error": "A holiday already exists on this date."}, status=400)
+
+            # Create the holiday
+            holiday = Holiday.objects.create(
+                date=holiday_date,
+                name=name,
+                description=description
+            )
+
+            # Return success response with the created holiday details
+            ist = pytz.timezone("Asia/Kolkata")
+            holiday_date_ist = timezone.make_aware(timezone.datetime.combine(holiday.date, timezone.time.min), ist)
+
+            return JsonResponse({
+                "message": "Holiday created successfully",
+                "date": holiday_date_ist.isoformat(),
+                "name": holiday.name,
+                "description": holiday.description
+            }, status=201)
+
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+    return JsonResponse({"error": "Invalid request method"}, status=405)

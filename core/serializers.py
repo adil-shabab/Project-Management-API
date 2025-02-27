@@ -9,6 +9,16 @@ class LoginSerializer(serializers.Serializer):
 
 
 
+class AttendanceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Attendance
+        fields = '__all__'
+
+class LeaveSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Leave
+        fields = '__all__'
+
 
 class TaskImageSerializer(serializers.ModelSerializer):
     class Meta:

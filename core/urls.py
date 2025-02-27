@@ -39,4 +39,12 @@ urlpatterns = [
     path('delete_user/<int:user_id>/', DeleteUserView.as_view(), name='delete_user'),
     path('edit_user/<int:user_id>/', EditUserView.as_view(), name='edit_user'),
     path('tasks/<int:task_id>/history/', TaskHistoryView.as_view(), name='task-history'),
+
+
+    path('api/register-face/', register_face, name='register_face'),
+    path('api/punch-in/', punch_in, name='punch_in'),
+    path('api/punch-out/', punch_out, name='punch_out'),
+    path('api/is-punched-in/', is_punched_in, name='is_punched_in'),  # Add new URL
+
+    path('api/create-holiday/', create_holiday, name='create_holiday'),
 ]

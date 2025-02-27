@@ -1,6 +1,8 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.utils import timezone
+from django.utils.timezone import now
+import numpy as np
 
 
 class UserManager(BaseUserManager):
@@ -61,6 +63,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_staff = models.BooleanField(default=False)
     is_superuser = models.BooleanField(default=False)
 
+
     objects = UserManager()
 
     USERNAME_FIELD = 'username'
@@ -73,9 +76,107 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 
+class FaceEncoding(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    encoding = models.BinaryField()  # Store face encoding as bytes
+
+    def set_encoding(self, encoding):
+        """Convert numpy array to bytes for storage."""
+        self.encoding = encoding.tobytes()
+
+    def get_encoding(self):
+        """Convert bytes back to numpy array."""
+        return np.frombuffer(self.encoding, dtype=np.float64)
+
+    def __str__(self):
+        return f"Face encoding for {self.user.username}"
+
+
+class Attendance(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    date = models.DateField(default=now)
+    punch_in_time = models.DateTimeField(null=True, blank=True)
+    punch_in_location = models.CharField(max_length=255, null=True, blank=True)
+    punch_out_time = models.DateTimeField(null=True, blank=True)
+    punch_out_location = models.CharField(max_length=255, null=True, blank=True)
+    work_type = models.CharField(
+        max_length=20, 
+        choices=[('WFO', 'Work from Office'), ('WFH', 'Work from Home')], 
+        null=True, 
+        blank=True
+    )
+    face_verified = models.BooleanField(default=False)
+    status_punchin = models.CharField(
+        max_length=20,
+        choices=[('On Time', 'On Time'), ('Late', 'Late'), ('Absent', 'Absent')],
+        default='Absent',
+        help_text="Status specifically for punch-in"
+    )
+    status_punchout = models.CharField(
+        max_length=20,
+        choices=[('On Time', 'On Time'), ('Early', 'Early'), ('Absent', 'Absent')],
+        default='Absent',
+        help_text="Status specifically for punch-out"
+    )
+    reason = models.CharField(
+        max_length=255, 
+        null=True, 
+        blank=True, 
+        help_text="Reason for Work from Home, if applicable"
+    )
+    status = models.CharField(
+        max_length=20, 
+        choices=[('On Time', 'On Time'), ('Punched in Late', 'Punched in Late'), 
+                 ('Punched out Early', 'Punched out Early'), ('Absent', 'Absent')],
+        default='Absent',
+        help_text="Overall attendance status"
+    )
+
+    def __str__(self):
+        return f"{self.user.username} - {self.date} - {self.status}"
+
+
+class Leave(models.Model):
+    LEAVE_TYPES = (
+        ('Lose of Pay', 'Lose of Pay'),
+        ('Casual Leave', 'Casual Leave'),
+        ('Paid Leave', 'Paid Leave'),
+        ('Sick Leave', 'Sick Leave'),
+    )
+
+    STATUS_CHOICES = (
+        ('Pending', 'Pending'),
+        ('Approved', 'Approved'),
+        ('Rejected', 'Rejected'),
+    )
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    date = models.DateField()
+    leave_type = models.CharField(max_length=20, choices=LEAVE_TYPES, default="Lose of Pay")
+    reason = models.CharField(max_length=255, default="Absent without Punch-in")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="Pending")
+
+    def __str__(self):
+        return f"{self.user.username} - {self.date} - {self.reason} - {self.status}"
 
 
 
+
+# models.py (add this below the Leave model or in a separate file if needed)
+class Holiday(models.Model):
+    date = models.DateField(unique=True, help_text="The date of the holiday")
+    name = models.CharField(max_length=100, help_text="Name of the holiday (e.g., Independence Day)")
+    description = models.TextField(blank=True, help_text="Optional description of the holiday")
+
+    def __str__(self):
+        return f"{self.name} - {self.date}"
+
+    class Meta:
+        ordering = ['date']  # Order holidays by date
+
+
+        
+        
 
 # Project Model
 class Project(models.Model):

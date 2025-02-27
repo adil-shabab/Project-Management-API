@@ -18,6 +18,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 import os
 from pathlib import Path
 from datetime import timedelta
+from celery.schedules import crontab
 
 
 
@@ -37,7 +38,6 @@ DEBUG = True
 ALLOWED_HOSTS = ['*']
 
 
-# Application definition
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -53,10 +53,12 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'rest_framework_simplejwt',
 
+    'django_celery_beat',
+
 ]
 
 
-
+USE_TZ = True
 
 
 
@@ -153,26 +155,26 @@ SIMPLE_JWT = {
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
-
-
-
-
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'thinkbdb',
-        'USER': 'thinkbdbuser',
-        'PASSWORD': 'Project#Management123thinkB',
-        'HOST': 'localhost',
-        'PORT': '',
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
+
+
+
+
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'thinkbdb',
+#         'USER': 'thinkbdbuser',
+#         'PASSWORD': 'Project#Management123thinkB',
+#         'HOST': 'localhost',
+#         'PORT': '',
+#     }
+# }
 
 
 
@@ -224,3 +226,5 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'core.User'
 
 SECRET_KEY_API = 'S89jfa9kufwjsad8sdf9k9as8dfjskd9s3djfks9'
+
+TIME_ZONE = 'Asia/Kolkata'

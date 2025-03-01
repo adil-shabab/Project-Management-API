@@ -22,8 +22,8 @@ def start_scheduler():
         'cron',
         args=['auto_attendance_check'],
         trigger='cron',
-        hour=16,  # 11 PM
-        minute=10,  # 59 minutes
+        hour=17,  # 11 PM
+        minute=38,  # 59 minutes
         timezone=ist
     )
     

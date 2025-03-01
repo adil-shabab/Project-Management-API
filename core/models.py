@@ -135,13 +135,26 @@ class Attendance(models.Model):
     def __str__(self):
         return f"{self.user.username} - {self.date} - {self.status}"
 
-
 class Leave(models.Model):
     LEAVE_TYPES = (
-        ('Lose of Pay', 'Lose of Pay'),
-        ('Casual Leave', 'Casual Leave'),
-        ('Paid Leave', 'Paid Leave'),
-        ('Sick Leave', 'Sick Leave'),
+        ('Full Day - Lose of Pay', 'Full Day - Lose of Pay'),
+        ('Full Day - Casual Leave', 'Full Day - Casual Leave'),
+        ('Full Day - Paid Leave', 'Full Day - Paid Leave'),
+        ('Full Day - Sick Leave', 'Full Day - Sick Leave'),
+        ('Half Day - First Half - Lose of Pay', 'Half Day - First Half - Lose of Pay'),
+        ('Half Day - Second Half - Lose of Pay', 'Half Day - Second Half - Lose of Pay'),
+        ('Half Day - First Half - Casual Leave', 'Half Day - First Half - Casual Leave'),
+        ('Half Day - Second Half - Casual Leave', 'Half Day - Second Half - Casual Leave'),
+        ('Half Day - First Half - Paid Leave', 'Half Day - First Half - Paid Leave'),
+        ('Half Day - Second Half - Paid Leave', 'Half Day - Second Half - Paid Leave'),
+        ('Half Day - First Half - Sick Leave', 'Half Day - First Half - Sick Leave'),
+        ('Half Day - Second Half - Sick Leave', 'Half Day - Second Half - Sick Leave'),
+    )
+
+    HALF_DAY_OPTIONS = (
+        ('', 'Full Day'),  # Default for full-day leaves
+        ('First Half', 'First Half'),
+        ('Second Half', 'Second Half'),
     )
 
     STATUS_CHOICES = (
@@ -152,13 +165,16 @@ class Leave(models.Model):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     date = models.DateField()
-    leave_type = models.CharField(max_length=20, choices=LEAVE_TYPES, default="Lose of Pay")
+    leave_type = models.CharField(max_length=50, choices=LEAVE_TYPES, default="Full Day - Lose of Pay")
+    half_day_option = models.CharField(max_length=20, choices=HALF_DAY_OPTIONS, default='', blank=True)
     reason = models.CharField(max_length=255, default="Absent without Punch-in")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="Pending")
 
     def __str__(self):
-        return f"{self.user.username} - {self.date} - {self.reason} - {self.status}"
+        return f"{self.user.username} - {self.date} - {self.get_leave_type_display()} - {self.status} {'(Half Day - ' + self.half_day_option + ')' if self.half_day_option else ''}"
 
+    def is_half_day(self):
+        return 'Half Day' in self.leave_type
 
 
 
@@ -324,6 +340,7 @@ class Notification(models.Model):
     NOTIFICATION_TYPE_CHOICES = [
         ('task', 'Task'),
         ('project', 'Project'),
+        ('leave', 'Leave'),
     ]
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")  # Link to a user
@@ -333,6 +350,7 @@ class Notification(models.Model):
     type = models.CharField(max_length=10, choices=NOTIFICATION_TYPE_CHOICES)  # Type of notification (task or project)
     project = models.ForeignKey(Project, on_delete=models.CASCADE, null=True, blank=True)
     task = models.ForeignKey(Task, on_delete=models.CASCADE, null=True, blank=True)
+    leave = models.ForeignKey(Leave, on_delete=models.CASCADE, null=True, blank=True)
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name="created_notifications")  # Link to the user who created the notification
 
     class Meta:

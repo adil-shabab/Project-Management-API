@@ -233,3 +233,8 @@ class TaskHistorySerializer(serializers.ModelSerializer):
     class Meta:
         model = TaskHistory
         fields = ['id', 'task', 'status', 'changed_by', 'changed_at', 'notes', 'reason']
+
+
+
+
+        

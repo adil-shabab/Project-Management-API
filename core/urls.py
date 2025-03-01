@@ -1,4 +1,3 @@
-# urls.py
 from django.urls import path
 from .views import *
 from rest_framework_simplejwt.views import TokenRefreshView
@@ -47,4 +46,11 @@ urlpatterns = [
     path('api/is-punched-in/', is_punched_in, name='is_punched_in'),  # Add new URL
 
     path('api/create-holiday/', create_holiday, name='create_holiday'),
+    path('api/list-holidays/', list_holidays, name='list_holidays'),  # Add new URL
+    path('api/leave-balances/', leave_balances, name='leave_balances'),
+    path('api/request-leave/', request_leave, name='request_leave'),
+    path('api/view-attendance/', view_attendance, name='view_attendance'),  # Add new URL
+    path('api/list-leave-requests/', list_leave_requests, name='list_leave_requests'),
+    path('api/leave/<int:leave_id>/', leave_detail, name='leave_detail'),
+    path('api/check-punch-status/', check_punch_status, name='check_punch_status'),
 ]

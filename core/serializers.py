@@ -25,7 +25,6 @@ class TaskImageSerializer(serializers.ModelSerializer):
         model = TaskImage
         fields = ['image']
 
-
 class UserSerializer(serializers.ModelSerializer):
     """
     Serializer for the User model to include user details.
@@ -42,7 +41,7 @@ class UserSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         """Customize response to hide the hashed password"""
         data = super().to_representation(instance)
-        data['password'] = "********"  # Hide the hashed password
+        data['password'] = "********"  # here i wan to pass exact password in text format
         return data
         
 
@@ -224,7 +223,7 @@ class NotificationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Notification
-        fields = ['id', 'message', 'created_by', 'created_at', 'read_status', 'type', 'project', 'task']
+        fields = ['id', 'message', 'created_by', 'created_at', 'read_status', 'type', 'project', 'task', 'leave']
 
 
 

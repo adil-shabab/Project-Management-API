@@ -12,7 +12,7 @@ from rest_framework.permissions import AllowAny
 from .serializers import *
 from .models import *
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.authentication import JWTAuthentication
 import logging
 from rest_framework.parsers import JSONParser
@@ -99,11 +99,9 @@ def register_face(request):
 
 
 
-
-
 # Define office coordinates (Bangalore, India)
-OFFICE_COORDINATES = (13.002685534417267, 77.6613268167425)  # Bangalore coordinates
-OFFICE_RADIUS_KM = 1  # 1 kilometer radius
+OFFICE_COORDINATES = (13.002685534417267, 77.6613268167425)
+OFFICE_RADIUS_KM = 2.0  # Increased to 2 km to account for GPS inaccuracies
 
 @csrf_exempt
 def punch_in(request):
@@ -112,8 +110,8 @@ def punch_in(request):
             data = request.POST if request.POST else json.loads(request.body.decode('utf-8'))
             user_id = data.get("user_id")
             face_image = data.get("face_image")
-            location = data.get("location", "Unknown")  # Default to "Unknown" if not provided
-            reason = data.get("reason", "")  # Reason from frontend
+            location = data.get("location", "Unknown")
+            reason = data.get("reason", "")
 
             print(f"Received data: user_id={user_id}, face_image={face_image[:50] if face_image else 'None'}, location={location}, reason={reason}")
 
@@ -125,22 +123,20 @@ def punch_in(request):
             except User.DoesNotExist:
                 return JsonResponse({"error": "User not found"}, status=404)
 
-            # Check if user has already punched in today
             ist = pytz.timezone("Asia/Kolkata")
             today = timezone.now().astimezone(ist).date()
             existing_attendance = Attendance.objects.filter(
                 user=user,
                 date=today,
-                punch_in_time__isnull=False  # Already punched in
+                punch_in_time__isnull=False
             ).first()
 
             if existing_attendance:
-                # Return existing punch-in details with ISO format including timezone
                 punch_in_time_ist = existing_attendance.punch_in_time.astimezone(ist)
                 return JsonResponse({
                     "message": "Already punched in today",
                     "location": existing_attendance.punch_in_location,
-                    "punch_in_time": punch_in_time_ist.isoformat(),  # ISO format with timezone (e.g., "2025-02-25T15:34:19+05:30")
+                    "punch_in_time": punch_in_time_ist.isoformat(),
                     "work_type": existing_attendance.work_type,
                     "status_punchin": existing_attendance.status_punchin,
                     "reason": existing_attendance.reason
@@ -166,53 +162,43 @@ def punch_in(request):
             if not matches[0]:
                 return JsonResponse({"error": "Face verification failed"}, status=403)
 
-            work_type = "WFH"  # Default to WFH
+            work_type = "WFH"  # Default
             status_punchin = "On Time"
-            status_punchout = "Absent"  # Default until punch-out occurs
+            status_punchout = "Absent"
             status = "On Time"
 
             if location != "Unknown" and location != "Location access denied":
-                print(f"Processing location: {location}")
                 try:
-                    # Try splitting with and without space for robustness
                     lat_lon = location.split(",")
                     if len(lat_lon) != 2:
                         raise ValueError("Invalid location format")
                     lat, lon = map(float, [lat_lon[0].strip(), lat_lon[1].strip()])
                     user_location = (lat, lon)
-                    print(f"User location (lat, lon): {user_location}")
-                    print(f"Office coordinates: {OFFICE_COORDINATES}")
                     distance_km = geodesic(user_location, OFFICE_COORDINATES).kilometers
-                    print(f"Calculated distance: {distance_km} km")
+                    distance_km = round(distance_km, 2)  # Round to 2 decimal places
+                    print(f"User location: {user_location}, Office location: {OFFICE_COORDINATES}, Distance: {distance_km:.3f} km, Radius: {OFFICE_RADIUS_KM} km")
 
                     if distance_km <= OFFICE_RADIUS_KM:
                         work_type = "WFO"
-                        print("Setting work_type to WFO because distance <= OFFICE_RADIUS_KM")
+                        print("User is within office radius, setting work_type to WFO")
                     else:
                         work_type = "WFH"
-                        print("Setting work_type to WFH because distance > OFFICE_RADIUS_KM")
+                        print("User is outside office radius, setting work_type to WFH")
+                        if not reason.strip():
+                            return JsonResponse({
+                                "error": "Reason required for Work From Home",
+                                "require_reason": True
+                            }, status=400)
                 except ValueError as ve:
                     print(f"Error parsing location: {ve}")
-                    return JsonResponse({"error": f"Invalid location format. Expected 'latitude,longitude'. Error: {str(ve)}"}, status=400)
-            else:
-                print(f"Location is 'Unknown' or 'Location access denied', defaulting to WFH")
-                work_type = "WFH"
-
-            print(f"Final work_type before saving: {work_type}")
+                    return JsonResponse({"error": f"Invalid location format: {str(ve)}"}, status=400)
 
             punch_in_time = timezone.now().astimezone(ist)
-            print(f"Punch-in time (IST): {punch_in_time.strftime('%Y-%m-%d %H:%M:%S')}")
-
             punch_in_hour = punch_in_time.hour
             punch_in_minute = punch_in_time.minute
             if punch_in_hour > 9 or (punch_in_hour == 9 and punch_in_minute > 30):
                 status_punchin = "Late"
                 status = "Punched in Late"
-            else:
-                status_punchin = "On Time"
-                status = "On Time"
-
-            print(f"Status punchin: {status_punchin}")
 
             attendance, created = Attendance.objects.get_or_create(
                 user=user,
@@ -240,14 +226,11 @@ def punch_in(request):
                 attendance.status = status
                 attendance.save()
 
-            print(f"Work type after saving: {attendance.work_type}")
-
-            # Return punch-in details with ISO format including timezone
             punch_in_time_ist = attendance.punch_in_time.astimezone(ist)
             return JsonResponse({
                 "message": "Punched in successfully",
                 "location": attendance.punch_in_location,
-                "punch_in_time": punch_in_time_ist.isoformat(),  # ISO format with timezone (e.g., "2025-02-25T15:34:19+05:30")
+                "punch_in_time": punch_in_time_ist.isoformat(),
                 "work_type": attendance.work_type,
                 "status_punchin": attendance.status_punchin,
                 "reason": attendance.reason
@@ -258,12 +241,7 @@ def punch_in(request):
     return JsonResponse({"error": "Invalid request method"}, status=405)
 
 
-    
 
-
-
-
-    
 @csrf_exempt
 def punch_out(request):
     if request.method == "POST":
@@ -271,7 +249,9 @@ def punch_out(request):
             data = request.POST if request.POST else json.loads(request.body.decode('utf-8'))
             user_id = data.get("user_id")
             face_image = data.get("face_image")
-            location = data.get("location")
+            location = data.get("location", "Unknown")
+
+            print(f"Received data: user_id={user_id}, face_image={face_image[:50] if face_image else 'None'}, location={location}")
 
             if not user_id or not face_image:
                 return JsonResponse({"error": "Missing user_id or face_image"}, status=400)
@@ -281,30 +261,27 @@ def punch_out(request):
             except User.DoesNotExist:
                 return JsonResponse({"error": "User not found"}, status=404)
 
-            # Get today's attendance record for the user
             ist = pytz.timezone("Asia/Kolkata")
             today = timezone.now().astimezone(ist).date()
             attendance = Attendance.objects.filter(
                 user=user,
                 date=today,
-                punch_in_time__isnull=False  # Ensure user has punched in
+                punch_in_time__isnull=False
             ).first()
 
             if not attendance:
                 return JsonResponse({"error": "No punch-in record found for today"}, status=400)
 
-            # Check if user has already punched out
             if attendance.punch_out_time:
                 punch_out_time_ist = attendance.punch_out_time.astimezone(ist)
                 return JsonResponse({
                     "message": "Already punched out today",
                     "location": attendance.punch_out_location,
-                    "punch_out_time": punch_out_time_ist.isoformat(),  # ISO format with timezone (e.g., "2025-02-25T18:30:00+05:30")
+                    "punch_out_time": punch_out_time_ist.isoformat(),
                     "work_type": attendance.work_type,
                     "status_punchout": attendance.status_punchout
                 })
 
-            # Process face image for verification
             if "," in face_image:
                 face_image = face_image.split(",")[1]
             image_data = base64.b64decode(face_image)
@@ -325,54 +302,52 @@ def punch_out(request):
             if not matches[0]:
                 return JsonResponse({"error": "Face verification failed"}, status=403)
 
-            # Determine work type based on location (similar to punch-in)
-            OFFICE_RADIUS_KM = 1  # 1 kilometer radius
-            work_type = attendance.work_type  # Retain the work type from punch-in
+            work_type = attendance.work_type  # Retain from punch-in
 
-            # Update punch-out time and determine status based on 6:30 PM IST
             punch_out_time = timezone.now().astimezone(ist)
             punch_out_hour = punch_out_time.hour
             punch_out_minute = punch_out_time.minute
 
-            # Define 6:30 PM IST
             target_hour = 18  # 6 PM
             target_minute = 30  # 30 minutes
 
             if punch_out_hour < target_hour or (punch_out_hour == target_hour and punch_out_minute < target_minute):
-                status_punchout = "Early Leaving"  # Before 6:30 PM
+                status_punchout = "Early Leaving"
             elif punch_out_hour > target_hour or (punch_out_hour == target_hour and punch_out_minute > target_minute):
-                status_punchout = "Late"  # After 6:30 PM
+                status_punchout = "Late"
             else:
-                status_punchout = "On Time"  # Exactly 6:30 PM
+                status_punchout = "On Time"
 
-            # Check location for WFO punch-outs (optional additional validation)
             if location != "Unknown" and location != "Location access denied":
-                lat, lon = map(float, location.split(", "))
-                user_location = (lat, lon)
-                distance_km = geodesic(user_location, OFFICE_COORDINATES).kilometers
+                try:
+                    lat, lon = map(float, location.split(","))  # Adjusted for "lat,lon" format
+                    user_location = (lat, lon)
+                    distance_km = geodesic(user_location, OFFICE_COORDINATES).kilometers
+                    print(f"User location: {user_location}, Distance to office: {distance_km:.3f} km")
 
-                if distance_km > OFFICE_RADIUS_KM and work_type == "WFO":
-                    status_punchout = "Early Leaving"  # If punching out far from office while WFO, mark as early
+                    if distance_km > OFFICE_RADIUS_KM and work_type == "WFO":
+                        status_punchout = "Early Leaving"
+                except ValueError as ve:
+                    print(f"Error parsing location: {ve}")
+                    return JsonResponse({"error": f"Invalid location format: {str(ve)}"}, status=400)
 
-            # Update attendance with punch-out details
             attendance.punch_out_time = punch_out_time
             attendance.punch_out_location = location
             attendance.status_punchout = status_punchout
             attendance.save()
 
-            # Return punch-out details with ISO format including timezone
             punch_out_time_ist = attendance.punch_out_time.astimezone(ist)
             return JsonResponse({
                 "message": "Punched out successfully",
                 "location": attendance.punch_out_location,
-                "punch_out_time": punch_out_time_ist.isoformat(),  # ISO format with timezone (e.g., "2025-02-25T18:30:00+05:30")
+                "punch_out_time": punch_out_time_ist.isoformat(),
                 "work_type": attendance.work_type,
                 "status_punchout": attendance.status_punchout
             })
         except Exception as e:
+            print(f"Exception occurred: {str(e)}")
             return JsonResponse({"error": str(e)}, status=500)
     return JsonResponse({"error": "Invalid request method"}, status=405)
-
 
 
 @csrf_exempt
@@ -530,6 +505,7 @@ class EditProfileView(APIView):
                 'username': user.username,
                 'full_name': user.full_name,
                 'email': user.email,
+                'id': user.id,
                 'role': user.role,
                 'department': user.department,
                 'position': user.position,
@@ -572,6 +548,7 @@ class EditAvatarView(APIView):
                     'avatar': user.avatar.url,
                     'phone_number': user.phone_number,
                     'username': user.username,
+                    'id':user.id,
                     'full_name': user.full_name,
                     'email': user.email,
                     'role': user.role,
@@ -682,7 +659,22 @@ class UserTasksWithTodayStartDateView(APIView):
 
 
 
+class AdminPendingInReviewTasksView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]  # Restrict to admin users only
 
+    def get(self, request):
+        # Fetch all tasks with status 'pending' or 'in_review'
+        tasks = Task.objects.filter(
+            Q(status='pending') | Q(status='in_review')
+        ).select_related('user', 'assigned_by', 'project')  # Optimize query with related fields
+
+        # Serialize the tasks
+        serializer = TaskSerializer(tasks, many=True)
+
+        return Response({
+            "message": "Pending and in-review tasks retrieved successfully!",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
 
 
 class UserPendingTasksView(APIView):
@@ -691,7 +683,7 @@ class UserPendingTasksView(APIView):
     def get(self, request):
         # Get the logged-in user
         user = request.user
-        
+
         
         # Current date (only date part)
         current_date = now().date()
@@ -700,7 +692,7 @@ class UserPendingTasksView(APIView):
         tasks = Task.objects.filter(
             Q(user=user) & (
                 # Tasks that are ongoing: start_date in the past and due_date in the future
-                Q(start_date__date__lte=current_date, due_date__date__gte=current_date) |
+                Q(due_date__date__gte=current_date) |
                 
                 # Tasks that are overdue: due_date in the past and status is not 'approved'
                 Q(due_date__date__lt=current_date)
@@ -731,6 +723,47 @@ class TaskDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+
+
+
+
+class UserTaskSearchView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Get the logged-in user
+        user = request.user
+        
+        # Get the search query from request parameters
+        query = request.query_params.get('q', '').strip()
+
+        print(user.role)
+        
+
+        # Base queryset with proper if-elif-else structure
+        if user.role == 'Admin':
+            tasks = Task.objects.all()
+        elif user.role == 'Manager':
+            tasks = Task.objects.all()
+        else:
+            tasks = Task.objects.filter(user=user)
+
+
+        # Apply search filter if query exists
+        if query:
+            tasks = tasks.filter(
+                Q(title__icontains=query) |  # Search in title
+                Q(description__icontains=query)  # Search in description
+            )
+            
+
+        # Serialize the tasks
+        serializer = TaskSerializer(tasks, many=True)
+
+        return Response({
+            "message": "Tasks retrieved successfully!",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
 
 
 
@@ -1634,8 +1667,6 @@ class DeleteProjectView(APIView):
 
 
 
-
-
 class GetUserDetailsView(APIView):
     permission_classes = [IsAuthenticated]  # Ensure the user is authenticated
 
@@ -1650,7 +1681,6 @@ class GetUserDetailsView(APIView):
         serializer = UserSerializer(user)
 
         return Response(serializer.data, status=status.HTTP_200_OK)
-
 
 
 
@@ -2089,6 +2119,8 @@ def leave_balances(request):
 def view_attendance(request):
     from django.utils import timezone
     from datetime import timedelta
+    import pytz
+
     if request.method == "GET":
         print("Coming Here")
         try:
@@ -2110,7 +2142,7 @@ def view_attendance(request):
                 try:
                     user_id = int(user_id)  # Ensure user_id is an integer
                     user = User.objects.get(id=user_id)
-                    # Check if the requesting user is authorized to view this user's attendance
+                    # Check if the requesting user is authorized to view this user's attendance (add your logic here)
                 except (ValueError, User.DoesNotExist):
                     return JsonResponse({"error": "Invalid or non-existent user ID."}, status=400)
             else:
@@ -2139,47 +2171,50 @@ def view_attendance(request):
             leave_records = Leave.objects.filter(
                 user=user,
                 date__range=(start_date, end_date),
-                status__in=["Approved", "Pending"]  # Consider only approved or pending leaves
+                status__in=["Approved", "Pending"]
             ).order_by('date')
 
             holidays = Holiday.objects.filter(
                 date__range=(start_date, end_date)
             ).order_by('date')
 
-            # Prepare daily records for past days (yearly or monthly)
+            # Prepare daily records as structured data
             daily_records = []
             for date in (start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)):
                 record = {
-                    "date": date.strftime("%b %d"),  # Format as "Jan 1"
-                    "status": "Absent",  # Default status
+                    "date": date.strftime("%b %d"),  # e.g., "Jan 01"
+                    "is_sunday": False,
+                    "is_second_saturday": False,
+                    "is_fourth_saturday": False,
+                    "is_holiday": False,
+                    "holiday_name": None,
+                    "is_approved_leave": False,
+                    "leave_type": None,
+                    "leave_reason": None,
+                    "leave_status": None,
+                    "half_day_option": None,
                     "punch_in_time": None,
                     "punch_out_time": None,
                     "work_type": None,
-                    "leave_type": None,
-                    "leave_reason": None,
-                    "leave_status": None,  # Add leave status (Pending/Approved)
-                    "is_holiday": False,
-                    "holiday_name": None,
                     "punch_in_status": None,  # Early, Late, or On Time
                     "punch_out_status": None,  # Early, Late, or On Time
-                    "special_day": None,  # For Sundays, Second/Fourth Saturdays
-                    "half_day_option": None  # For half-day leaves
+                    "status": "Absent"  # Default status
                 }
 
                 # Check for special days (Sunday, Second/Fourth Saturday)
                 day_of_week = date.weekday()  # 0 = Monday, 6 = Sunday
                 if day_of_week == 6:  # Sunday
+                    record["is_sunday"] = True
                     record["status"] = "Sunday"
-                    record["special_day"] = "Sunday"
-                else:
-                    # Check for Saturdays (weekday = 5)
-                    if day_of_week == 5:  # Saturday
-                        # Find the week number (1-based) of the Saturday
-                        first_day_of_month = timezone.datetime(date.year, date.month, 1).astimezone(ist).date()
-                        weeks_in_month = (date - first_day_of_month).days // 7 + 1
-                        if weeks_in_month in [2, 4]:  # Second or Fourth Saturday
-                            record["status"] = f"{weeks_in_month}th Saturday"
-                            record["special_day"] = f"{weeks_in_month}th Saturday"
+                elif day_of_week == 5:  # Saturday
+                    first_day_of_month = timezone.datetime(date.year, date.month, 1).astimezone(ist).date()
+                    weeks_in_month = (date - first_day_of_month).days // 7 + 1
+                    if weeks_in_month == 2:
+                        record["is_second_saturday"] = True
+                        record["status"] = "Second Saturday"
+                    elif weeks_in_month == 4:
+                        record["is_fourth_saturday"] = True
+                        record["status"] = "Fourth Saturday"
 
                 # Check for attendance (overrides special days if present)
                 attendance = attendance_records.filter(date=date).first()
@@ -2207,15 +2242,17 @@ def view_attendance(request):
                         else:
                             record["punch_out_status"] = "On Time"
 
-                # Check for leave (overrides attendance and special days if exists on the same day)
+                # Check for leave (overrides attendance and special days if exists)
                 leave = leave_records.filter(date=date).first()
                 if leave:
                     record["status"] = "Leave"
                     record["leave_type"] = leave.leave_type
                     record["leave_reason"] = leave.reason
-                    record["leave_status"] = leave.status  # Add leave status (Pending/Approved)
+                    record["leave_status"] = leave.status
                     record["half_day_option"] = leave.half_day_option if leave.is_half_day() else None
-                    # Only reclassify to Lose of Pay if no punch-in and the leave is Pending (not Approved)
+                    if leave.status == "Approved":
+                        record["is_approved_leave"] = True
+                    # Reclassify to Lose of Pay if no punch-in and leave is Pending
                     if not attendance and leave.status == "Pending" and leave.leave_type in [
                         "Full Day - Casual Leave", "Full Day - Sick Leave", "Full Day - Paid Leave",
                         "Half Day - First Half - Casual Leave", "Half Day - Second Half - Casual Leave",
@@ -2230,202 +2267,106 @@ def view_attendance(request):
                             record["leave_type"] = "Full Day - Lose of Pay"
                             record["leave_reason"] = "Forgot to punch in" if not record["leave_reason"] else f"{record['leave_reason']}, Forgot to punch in"
 
-                # Check for holiday (overrides all if exists on the same day)
+                # Check for holiday (overrides all if exists)
                 holiday = holidays.filter(date=date).first()
                 if holiday:
-                    record["status"] = "Holiday"
                     record["is_holiday"] = True
                     record["holiday_name"] = holiday.name
+                    record["status"] = "Holiday"
 
-                # Format the record as requested (e.g., "Jan 1: Leave, Reason: forgot to punch in, Lose of Pay, Status: Pending")
-                formatted_record = f"{record['date']}: {record['status']}"
-                if record["special_day"]:
-                    formatted_record = f"{record['date']}: {record['special_day']}"
-                if record["status"] == "Working":
-                    punch_info = []
-                    if record["punch_in_time"]:
-                        punch_info.append(f"Punch-in on {record['punch_in_time']} {record['punch_in_status'] or ''}")
-                    if record["punch_out_time"]:
-                        punch_info.append(f"Punch-out on {record['punch_out_time']} {record['punch_out_status'] or ''}")
-                    if record["work_type"]:
-                        punch_info.append(f"{record['work_type']}")
-                    if punch_info:
-                        formatted_record += ", " + ", ".join(punch_info)
-                elif record["status"] == "Leave":
-                    if record["leave_type"]:
-                        formatted_record += f", {record['leave_type'].split(' - ')[-1]}"
-                    if record["half_day_option"]:
-                        formatted_record += f" ({record['half_day_option']})"
-                    if record["leave_reason"]:
-                        formatted_record += f", Reason: {record['leave_reason']}"
-                    if record["leave_status"]:
-                        formatted_record += f", Status: {record['leave_status']}"
-                elif record["status"] == "Holiday" and record["holiday_name"]:
-                    formatted_record += f", {record['holiday_name']}"
+                daily_records.append(record)
 
-                daily_records.append(formatted_record)
-
-            # Monthly or yearly overview (count all used leaves across the year for pending_leaves)
             if month:
                 total_days = (end_date - start_date).days + 1
                 working_days_base = total_days
-                # Subtract Sundays, Second/Fourth Saturdays, and holidays
-                for date in (start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)):
+                for date in (start_date + timedelta(days=i) for i in range(total_days)):
                     day_of_week = date.weekday()
                     if day_of_week == 6:  # Sunday
                         working_days_base -= 1
                     elif day_of_week == 5:  # Saturday
-                        first_day_of_month = timezone.datetime(year, month, 1).astimezone(ist).date()
+                        first_day_of_month = timezone.datetime(year, month, 1).astimezone(timezone.get_default_timezone()).date()
                         weeks_in_month = (date - first_day_of_month).days // 7 + 1
-                        if weeks_in_month in [2, 4]:  # Second or Fourth Saturday
+                        if weeks_in_month in [2, 4]:
                             working_days_base -= 1
                     if holidays.filter(date=date).exists():
                         working_days_base -= 1
 
-                # Only count approved leaves for leave_days (ignore pending)
-                approved_leave_records = Leave.objects.filter(
+                # Approved leave records for the month (for net_working_days calculation)
+                approved_leave_records_month = Leave.objects.filter(
                     user=user,
-                    date__range=(start_date, end_date),  # Only count leaves in this month
+                    date__range=(start_date, end_date),
                     status="Approved"
                 )
-                # Count half-day leaves as 0.5 days within the month for approved leaves only
-                full_day_leaves = approved_leave_records.filter(leave_type__contains="Full Day").count()
-                half_day_leaves = approved_leave_records.filter(leave_type__contains="Half Day").count() / 2
-                total_leave_days = full_day_leaves + half_day_leaves
-                net_working_days = working_days_base - total_leave_days
+                full_day_leaves_month = approved_leave_records_month.filter(leave_type__contains="Full Day").count()
+                half_day_leaves_month = approved_leave_records_month.filter(leave_type__contains="Half Day").count() / 2
+                total_leave_days_month = full_day_leaves_month + half_day_leaves_month
+                net_working_days = working_days_base - total_leave_days_month
 
-                # Calculate leave_days for approved leaves only within the month
+                # Total approved leave records for the year (for leave summary)
+                approved_leave_records_year = Leave.objects.filter(
+                    user=user,
+                    date__year=year,
+                    status="Approved"
+                )
+                pending_leave_records_year = Leave.objects.filter(
+                    user=user,
+                    date__year=year,
+                    status="Pending"
+                )
+
+                # Leave summary for the entire year
                 overview = {
                     "total_days": total_days,
                     "working_days_base": working_days_base,
                     "net_working_days": net_working_days,
                     "holiday_days": holidays.count(),
                     "leave_days": {
-                        "casual": sum(0.5 if "Half Day" in lt else 1 for lt in approved_leave_records.filter(leave_type__in=[
+                        "casual": sum(0.5 if "Half Day" in lt else 1 for lt in approved_leave_records_year.filter(leave_type__in=[
                             "Full Day - Casual Leave", "Half Day - First Half - Casual Leave", "Half Day - Second Half - Casual Leave"
                         ]).values_list('leave_type', flat=True)),
-                        "sick": sum(0.5 if "Half Day" in lt else 1 for lt in approved_leave_records.filter(leave_type__in=[
+                        "sick": sum(0.5 if "Half Day" in lt else 1 for lt in approved_leave_records_year.filter(leave_type__in=[
                             "Full Day - Sick Leave", "Half Day - First Half - Sick Leave", "Half Day - Second Half - Sick Leave"
                         ]).values_list('leave_type', flat=True)),
-                        "paid": sum(0.5 if "Half Day" in lt else 1 for lt in approved_leave_records.filter(leave_type__in=[
+                        "paid": sum(0.5 if "Half Day" in lt else 1 for lt in approved_leave_records_year.filter(leave_type__in=[
                             "Full Day - Paid Leave", "Half Day - First Half - Paid Leave", "Half Day - Second Half - Paid Leave"
                         ]).values_list('leave_type', flat=True)),
-                        "lose_of_pay": sum(0.5 if "Half Day" in lt else 1 for lt in approved_leave_records.filter(leave_type__in=[
+                        "lose_of_pay": sum(0.5 if "Half Day" in lt else 1 for lt in approved_leave_records_year.filter(leave_type__in=[
                             "Full Day - Lose of Pay", "Half Day - First Half - Lose of Pay", "Half Day - Second Half - Lose of Pay"
                         ]).values_list('leave_type', flat=True)),
                     },
                     "pending_leaves": {
-                        # Calculate pending leaves (all used leaves across the year, approved or pending) for balance
                         "casual": max(0, 10 - sum(0.5 if "Half Day" in lt else 1 for lt in Leave.objects.filter(
                             user=user,
                             date__year=year,
                             leave_type__in=["Full Day - Casual Leave", "Half Day - First Half - Casual Leave", "Half Day - Second Half - Casual Leave"],
-                            status__in=["Approved", "Pending"]  # Include both approved and pending for total usage
+                            status="Approved"
                         ).values_list('leave_type', flat=True))),
                         "sick": max(0, 8 - sum(0.5 if "Half Day" in lt else 1 for lt in Leave.objects.filter(
                             user=user,
                             date__year=year,
                             leave_type__in=["Full Day - Sick Leave", "Half Day - First Half - Sick Leave", "Half Day - Second Half - Sick Leave"],
-                            status__in=["Approved", "Pending"]
+                            status="Approved"
                         ).values_list('leave_type', flat=True))),
                         "paid": max(0, 10 - sum(0.5 if "Half Day" in lt else 1 for lt in Leave.objects.filter(
                             user=user,
                             date__year=year,
                             leave_type__in=["Full Day - Paid Leave", "Half Day - First Half - Paid Leave", "Half Day - Second Half - Paid Leave"],
-                            status__in=["Approved", "Pending"]
-                        ).values_list('leave_type', flat=True))),
-                    },
-                    "late_punch_ins": attendance_records.filter(status_punchin="Late").count(),
-                    "early_punch_outs": attendance_records.filter(status_punchout="Early").count()
-                }
-            else:
-                # Yearly overview (count all used leaves across the year for pending_leaves)
-                total_days = (end_date - start_date).days + 1
-                working_days_base = total_days
-                # Subtract Sundays, Second/Fourth Saturdays, and holidays for the year
-                for date in (start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)):
-                    day_of_week = date.weekday()
-                    if day_of_week == 6:  # Sunday
-                        working_days_base -= 1
-                    elif day_of_week == 5:  # Saturday
-                        # Determine if it's the 2nd or 4th Saturday of its month
-                        month_start = timezone.datetime(date.year, date.month, 1).astimezone(ist).date()
-                        weeks_in_month = (date - month_start).days // 7 + 1
-                        if weeks_in_month in [2, 4]:  # Second or Fourth Saturday
-                            working_days_base -= 1
-                    if holidays.filter(date=date).exists():
-                        working_days_base -= 1
-
-                # Only count approved leaves for leave_days (ignore pending)
-                approved_leave_records = Leave.objects.filter(
-                    user=user,
-                    date__range=(start_date, end_date),  # Only count leaves in this year
-                    status="Approved"
-                )
-                # Count half-day leaves as 0.5 days within the year for approved leaves only
-                full_day_leaves = approved_leave_records.filter(leave_type__contains="Full Day").count()
-                half_day_leaves = approved_leave_records.filter(leave_type__contains="Half Day").count() / 2
-                total_leave_days = full_day_leaves + half_day_leaves
-                net_working_days = working_days_base - total_leave_days
-
-                # Calculate leave_days for approved leaves only across the year
-                overview = {
-                    "total_days": total_days,
-                    "working_days_base": working_days_base,
-                    "net_working_days": net_working_days,
-                    "holiday_days": holidays.count(),
-                    "leave_days": {
-                        "casual": sum(0.5 if "Half Day" in lt else 1 for lt in approved_leave_records.filter(leave_type__in=[
-                            "Full Day - Casual Leave", "Half Day - First Half - Casual Leave", "Half Day - Second Half - Casual Leave"
-                        ]).values_list('leave_type', flat=True)),
-                        "sick": sum(0.5 if "Half Day" in lt else 1 for lt in approved_leave_records.filter(leave_type__in=[
-                            "Full Day - Sick Leave", "Half Day - First Half - Sick Leave", "Half Day - Second Half - Sick Leave"
-                        ]).values_list('leave_type', flat=True)),
-                        "paid": sum(0.5 if "Half Day" in lt else 1 for lt in approved_leave_records.filter(leave_type__in=[
-                            "Full Day - Paid Leave", "Half Day - First Half - Paid Leave", "Half Day - Second Half - Paid Leave"
-                        ]).values_list('leave_type', flat=True)),
-                        "lose_of_pay": sum(0.5 if "Half Day" in lt else 1 for lt in approved_leave_records.filter(leave_type__in=[
-                            "Full Day - Lose of Pay", "Half Day - First Half - Lose of Pay", "Half Day - Second Half - Lose of Pay"
-                        ]).values_list('leave_type', flat=True)),
-                    },
-                    "pending_leaves": {
-                        # Calculate pending leaves (all used leaves across the year, approved or pending) for balance
-                        "casual": max(0, 10 - sum(0.5 if "Half Day" in lt else 1 for lt in Leave.objects.filter(
-                            user=user,
-                            date__year=year,
-                            leave_type__in=["Full Day - Casual Leave", "Half Day - First Half - Casual Leave", "Half Day - Second Half - Casual Leave"],
-                            status__in=["Approved", "Pending"]  # Include both approved and pending for total usage
-                        ).values_list('leave_type', flat=True))),
-                        "sick": max(0, 8 - sum(0.5 if "Half Day" in lt else 1 for lt in Leave.objects.filter(
-                            user=user,
-                            date__year=year,
-                            leave_type__in=["Full Day - Sick Leave", "Half Day - First Half - Sick Leave", "Half Day - Second Half - Sick Leave"],
-                            status__in=["Approved", "Pending"]
-                        ).values_list('leave_type', flat=True))),
-                        "paid": max(0, 10 - sum(0.5 if "Half Day" in lt else 1 for lt in Leave.objects.filter(
-                            user=user,
-                            date__year=year,
-                            leave_type__in=["Full Day - Paid Leave", "Half Day - First Half - Paid Leave", "Half Day - Second Half - Paid Leave"],
-                            status__in=["Approved", "Pending"]
+                            status="Approved"
                         ).values_list('leave_type', flat=True))),
                     },
                     "late_punch_ins": attendance_records.filter(status_punchin="Late").count(),
                     "early_punch_outs": attendance_records.filter(status_punchout="Early").count()
                 }
 
-            return JsonResponse({
-                "message": f"Attendance report for {user.username} in {month or 'Year'} {year} retrieved successfully",
-                "daily_records": daily_records,
-                "overview": overview,
-                "user_id": user.id
-            }, status=200)
-
+                return JsonResponse({
+                    "message": f"Attendance report for {user.username} in {month} {year} retrieved successfully",
+                    "daily_records": daily_records,
+                    "overview": overview,
+                    "user_id": user.id
+                }, status=200)
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=500)
-    return JsonResponse({"error": "Invalid request method"}, status=405)
-
-
-
+    return JsonResponse({"error": "Invalid request method"}, status=405)   
 
 
     
@@ -2676,14 +2617,7 @@ def leave_detail(request, leave_id):
             if str(request_user.id) != str(leave.user.id):
                 return JsonResponse({"error": "Permission denied. You can only manage your own leave requests."}, status=403)
 
-        # For Admins/Managers, verify query_user_id matches leave.user.id if provided
-        elif query_user_id:
-            try:
-                user = User.objects.get(id=int(query_user_id))
-                if str(user.id) != str(leave.user.id):
-                    return JsonResponse({"error": "Leave request does not belong to the specified user."}, status=400)
-            except (ValueError, User.DoesNotExist):
-                return JsonResponse({"error": "Invalid or non-existent user ID."}, status=400)
+
 
         if request.method == "GET":
             # Return leave details
@@ -2740,13 +2674,12 @@ def leave_detail(request, leave_id):
 
 
 
-
 def check_punch_status(request):
     if request.method == "GET":
         try:
             user_id = request.GET.get("user_id")  # Get user_id from query parameter
             print(user_id)
-            request_user = User.objects.get(id = int(user_id))
+            request_user = User.objects.get(id=int(user_id))
 
             # Check user role and permissions
             if request_user.role not in ['Admin', 'Manager', 'Staff']:
@@ -2767,6 +2700,13 @@ def check_punch_status(request):
             else:
                 user = request_user  # Default to current user for Admins/Managers
 
+            # Check if face is registered by checking FaceEncoding
+            if not FaceEncoding.objects.filter(user=user).exists():
+                return JsonResponse({
+                    "error": "Face not registered. Please register your face first.",
+                    "redirect": "/register-face/"
+                }, status=403)
+
             # Get today's date in IST
             ist = pytz.timezone("Asia/Kolkata")
             today = timezone.now().astimezone(ist).date()
@@ -2776,8 +2716,7 @@ def check_punch_status(request):
                 user=user,
                 date=today
             ).first()
-            
-            
+
             print(attendance)
 
             punch_status = {

@@ -1,6 +1,9 @@
 # serializers.py
 from rest_framework import serializers
 from .models import *
+import re
+from django.db import transaction
+import logging
 
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=150)
@@ -14,10 +17,11 @@ class AttendanceSerializer(serializers.ModelSerializer):
         model = Attendance
         fields = '__all__'
 
-class LeaveSerializer(serializers.ModelSerializer):
+
+class ClientSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Leave
-        fields = '__all__'
+        model = Client
+        fields = ['id', 'title']
 
 
 class TaskImageSerializer(serializers.ModelSerializer):
@@ -44,6 +48,16 @@ class UserSerializer(serializers.ModelSerializer):
         data['password'] = "********"  # here i wan to pass exact password in text format
         return data
         
+
+
+class LeaveSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)  # To display task owner info
+
+    class Meta:
+        model = Leave
+        fields = '__all__'
+
+
 
 class TaskSerializerManager(serializers.ModelSerializer):
     images = TaskImageSerializer(many=True, required=False)
@@ -76,6 +90,8 @@ class TaskSerializerManager(serializers.ModelSerializer):
             TaskImage.objects.create(task=task, image=image)
 
         return task
+
+
 
 
 
@@ -162,6 +178,62 @@ class TicketTaskSerializer(serializers.ModelSerializer):
 
         return task
 
+class TaskSerializerNew(serializers.ModelSerializer):
+    images = TaskImageSerializer(many=True, required=False)
+    assigned_by = UserSerializer(read_only=True)
+    user = UserSerializer(read_only=True)
+    project = ProjectSerializer(read_only=True)
+    client = serializers.PrimaryKeyRelatedField(queryset=Client.objects.all(), required=True)
+    client_title = serializers.CharField(source='client.title', read_only=True)
+
+    class Meta:
+        model = Task
+        fields = [
+            'id', 'title', 'approved_date', 'review_date', 'description', 
+            'due_date', 'start_date', 'priority', 'user', 'assigned_by', 
+            'is_ticket', 'status', 'images', 'project', 'client', 'client_title'
+        ]
+        extra_kwargs = {
+            'title': {'required': True},
+            'description': {'required': True},
+            'priority': {'required': True},
+            'assigned_by': {'required': True},
+            'client': {'required': True},
+            'user': {'required': True},
+        }
+
+    def create(self, validated_data):
+        images_data = self.context['request'].FILES.getlist('images', [])
+        user = self.context['user']
+        
+        # Validate required fields
+        required_fields = ['title', 'description', 'priority', 'client']
+        for field in required_fields:
+            if field not in validated_data or validated_data[field] is None:
+                raise serializers.ValidationError({field: f"{field.capitalize()} is required."})
+        
+        # Extract user data from request data for creation
+        user_data = self.context['request'].data.get('user')
+        if not user_data:
+            raise serializers.ValidationError({'user': 'User is required.'})
+        
+        try:
+            assigned_to_user = User.objects.get(id=user_data)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({'user': 'User not found'})
+        
+        validated_data['assigned_by'] = user
+        validated_data['user'] = assigned_to_user
+        
+        # Create task
+        task = Task.objects.create(**validated_data)
+        
+        # Add images
+        for image in images_data:
+            TaskImage.objects.create(task=task, image=image)
+            
+        return task
+
 
 
 
@@ -171,9 +243,12 @@ class TaskSerializer(serializers.ModelSerializer):
     assigned_by = UserSerializer(read_only=True)  # To display assigned user info
     user = UserSerializer(read_only=True)  # To display task owner info
     project = ProjectSerializer(read_only=True) # To display
+    client = serializers.PrimaryKeyRelatedField(queryset=Client.objects.all(), required=True)
+    client_title = serializers.CharField(source='client.title', read_only=True)
+
     class Meta:
         model = Task
-        fields = ['id', 'title', 'approved_date', 'review_date', 'description', 'due_date', 'start_date', 'priority', 'user', 'assigned_by', 'is_ticket', 'status', 'images', 'project']
+        fields = ['id', 'title', 'client', 'client_title', 'approved_date', 'review_date', 'description', 'due_date', 'start_date', 'priority', 'user', 'assigned_by', 'is_ticket', 'status', 'images', 'project']
 
     def create(self, validated_data):
         # Extract files from the context
@@ -196,7 +271,60 @@ class TaskSerializer(serializers.ModelSerializer):
 
 
 
+# Set up logging
+logger = logging.getLogger(__name__)
 
+class UserSerializerComment(serializers.ModelSerializer):
+    avatar = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'full_name', 'avatar']
+
+    def get_avatar(self, obj):
+        if hasattr(obj, 'profile') and obj.profile.avatar:
+            return obj.profile.avatar.url if obj.profile.avatar else None
+        return None
+
+
+class CommentSerializer(serializers.ModelSerializer):
+    commented_by = UserSerializerComment(read_only=True)
+    mentions = UserSerializerComment(many=True, read_only=True)
+    content = serializers.CharField(max_length=1000, trim_whitespace=True)
+
+    class Meta:
+        model = Comment
+        fields = ['id', 'content', 'commented_by', 'created_at', 'task', 'mentions']
+        read_only_fields = ['id', 'created_at', 'commented_by']
+        extra_kwargs = {'task': {'write_only': True}}
+
+    def create(self, validated_data):
+        # Simplified create method, as logic is now in the view
+        return Comment.objects.create(
+            content=validated_data['content'],
+            commented_by=self.context['request'].user,
+            task=validated_data['task']
+        )
+
+
+
+
+
+
+        
+
+
+class TaskStatusChangeSerializer(serializers.ModelSerializer):
+    task_title = serializers.CharField(source='task.title', read_only=True)
+    changed_by_username = serializers.CharField(source='changed_by.full_name', read_only=True)
+
+    class Meta:
+        model = TaskStatusChange
+        fields = [
+            'id', 'task', 'task_title', 'due_date', 'start_date', 'priority', 
+            'created_at', 'status', 'reason', 'changed_by', 'changed_by_username'
+        ]
+        read_only_fields = ['id', 'created_at']
 
 class UserCreateSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)

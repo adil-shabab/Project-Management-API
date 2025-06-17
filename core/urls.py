@@ -12,6 +12,16 @@ urlpatterns = [
     path('tasks/create/me/', CreateTaskForMeView.as_view(), name='create_task_me'),
     path('tasks/create/manager/', CreateTaskManagerView.as_view(), name='create_task_manager'),
     path('tasks/pending/', UserPendingTasksView.as_view(), name='user_pending_task'),
+    path('tasks/all/', AllTasksStatusView.as_view(), name='all_tasks'),
+    path('tasks/create/', CreateTaskView.as_view(), name='create-task'),
+    path('tasks/<int:task_id>/status-changes/', TaskStatusChangesView.as_view(), name='task-status-changes'),
+    path('tasks/<int:task_id>/comments/', CommentCreateView.as_view(), name='comment-create'),
+    path('tasks/<int:task_id>/get/comments/', CommentListView.as_view(), name='comment-list'),
+    path('tasks/<int:task_id>/notifications/', NotificationCreateView.as_view(), name='notification-create'),
+    path('tasks/status/update/<int:task_id>/', TaskStatusUpdateView.as_view(), name='task-status-update'),
+    path('tasks/pending/manager/', ManagerPendingTasksView.as_view(), name='manager_pending_task'),
+    path('clients/', ClientListView.as_view(), name='client-list'),
+    path('clients/create/', CreateClientView.as_view(), name='create-client'),
     path('tasks/<int:task_id>/', TaskDetailView.as_view(), name='task-detail'),
     path('tasks/<int:task_id>/change-status/', ChangeTaskStatusView.as_view(), name='change-task-status'),
     path('tasks/date/<str:specific_date>/', UserSpecificDateTasksView.as_view(), name='tasks-specific-date'),
@@ -44,6 +54,9 @@ urlpatterns = [
     path('api/punch-in/', punch_in, name='punch_in'),
     path('api/punch-out/', punch_out, name='punch_out'),
     path('api/is-punched-in/', is_punched_in, name='is_punched_in'),  # Add new URL
+
+    path('api/leave-requests/', LeaveRequests.as_view(), name='leave_requests'),  # Add new URL
+    path('api/attendance/status/', AttendanceStatusView.as_view(), name='attendance-status'),
 
     path('api/create-holiday/', create_holiday, name='create_holiday'),
     path('api/list-holidays/', list_holidays, name='list_holidays'),  # Add new URL

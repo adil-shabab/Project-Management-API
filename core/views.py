@@ -196,7 +196,7 @@ def punch_in(request):
             punch_in_time = timezone.now().astimezone(ist)
             punch_in_hour = punch_in_time.hour
             punch_in_minute = punch_in_time.minute
-            if punch_in_hour > 9 or (punch_in_hour == 9 and punch_in_minute > 30):
+            if punch_in_hour > 10 or (punch_in_hour == 10 and punch_in_minute > 2):
                 status_punchin = "Late"
                 status = "Punched in Late"
 
@@ -593,6 +593,72 @@ class CreateTaskForMeView(APIView):
 
 
 
+class CreateClientView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        # Check user role
+        if request.user.role == 'Staff':
+            return Response(
+                {"message": "You don't have access for this"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = ClientSerializerPost(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(
+                {"message": "Client created successfully!", "data": serializer.data},
+                status=status.HTTP_201_CREATED
+            )
+        return Response(
+            {"message": serializer.errors}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+
+class ClientListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            clients = Client.objects.all()
+            serializer = ClientSerializer(clients, many=True)
+            return Response({
+                "message": "Clients retrieved successfully!",
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({
+                "message": "Failed to retrieve clients",
+                "error": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class CreateTaskView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        print("Received data:", request.data)  # Debugging
+        
+        serializer = TaskSerializerNew(
+            data=request.data,
+            context={
+                'request': request,
+                'user': request.user
+            }
+        )
+        
+        if serializer.is_valid():
+            task = serializer.save()
+            return Response({
+                "message": "Task created successfully!",
+                "data": serializer.data,
+            }, status=status.HTTP_201_CREATED)
+            
+        print("Validation errors:", serializer.errors)  # Debugging
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        
 class CreateTaskManagerView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -677,37 +743,342 @@ class AdminPendingInReviewTasksView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+
+
+
+
+
+class TaskStatusUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, task_id):
+        try:
+            task = Task.objects.get(id=task_id)
+        except Task.DoesNotExist:
+            return Response(
+                {"message": "Task not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        new_status = request.data.get('status')
+        new_due_date = request.data.get('due_date')
+        reason = request.data.get('reason', '')
+
+        # Check if user has permission to modify this task
+        if not self._has_permission(request.user, task, new_status):
+            return Response(
+                {"message": "You don't have permission to perform this action."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Validate status transition
+        if not self._is_valid_transition(task.status, new_status):
+            return Response(
+                {"message": f"Invalid status transition from {task.status} to {new_status}."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Store current state before changes
+        current_state = {
+            'status': task.status,
+            'due_date': task.due_date,
+            'start_date': task.start_date,
+            'priority': task.priority,
+            'approved_date': task.approved_date,
+            'review_date': task.review_date
+        }
+
+        # Handle status-specific logic
+        if new_status == 'in_progress':
+            # When coming from approved, clear approval dates
+            if task.status == 'approved':
+                task.approved_date = None
+            
+            # Set start date if coming from pending or approved
+            if task.status in ['pending', 'approved']:
+                task.start_date = timezone.now()
+            
+            # Allow due date update if provided
+            if new_due_date:
+                task.due_date = new_due_date
+
+        elif new_status == 'pending':
+            # Clear all dates when moving to pending
+            task.start_date = None
+            task.due_date = None
+            task.review_date = None
+            task.approved_date = None
+
+        elif new_status == 'in_review':
+            task.review_date = timezone.now()
+            # If coming from approved, clear approved date
+            if task.status == 'approved':
+                task.approved_date = None
+
+        elif new_status == 'approved':
+            if not (request.user.role in ['Manager', 'Admin']):
+                return Response(
+                    {"message": "Only managers/admins can approve tasks."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            task.approved_date = timezone.now()
+
+        # Update task status
+        task.status = new_status
+        task.save()
+
+        # Log the status change
+        self._log_status_change(task, current_state, request.user, reason)
+
+        return Response(
+            {
+                "message": f"Task status updated to {new_status} successfully!",
+                "data": TaskSerializer(task).data
+            },
+            status=status.HTTP_200_OK
+        )
+
+    def _has_permission(self, user, task, new_status):
+        # Managers and admins can perform any transition
+        if user.role in ['Manager', 'Admin']:
+            return True
+
+        # Task owner can perform specific transitions
+        if user == task.user:
+            return new_status in ['in_progress', 'pending', 'in_review']
+        
+        return False
+
+
+
+    def _is_valid_transition(self, current_status, new_status):
+        valid_transitions = {
+            'pending': ['in_progress'],
+            'in_progress': ['pending', 'in_review'],
+            'in_review': ['pending', 'approved', 'in_progress'],
+            'approved': ['pending', 'in_progress', 'in_review']
+        }
+        return new_status in valid_transitions.get(current_status, [])
+
+    def _log_status_change(self, task, previous_state, user, reason):
+        TaskStatusChange.objects.create(
+            task=task,
+            status=previous_state['status'],
+            due_date=previous_state['due_date'],
+            start_date=previous_state['start_date'],
+            priority=previous_state['priority'],
+            reason=reason,
+            changed_by=user,
+        )
+
+
+
+from django.db import transaction
+class CommentCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, task_id):
+        try:
+            task = Task.objects.get(id=task_id)
+        except Task.DoesNotExist:
+            return Response({
+                "message": "Task not found!"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        data = request.data.copy()
+        data['task'] = task_id
+        data['commented_by'] = request.user.id
+
+        serializer = CommentSerializer(data=data, context={'request': request})
+        if serializer.is_valid():
+            with transaction.atomic():
+                # Reformat mentions in content
+                content = serializer.validated_data.get('content', '')
+                logger.info(f"Processing comment content: {content}")
+                formatted_content = re.sub(r'@\[(.*?)\]\(\d+\)', r'@\1', content)
+                logger.info(f"Formatted content: {formatted_content}")
+
+                # Create comment
+                comment = Comment.objects.create(
+                    content=formatted_content,
+                    commented_by=request.user,
+                    task=task
+                )
+                logger.info(f"Created comment ID: {comment.id} for task ID: {comment.task.id}")
+
+                # Parse mentions
+                mention_usernames = [u.lstrip('@') for u in formatted_content.split() if u.startswith('@')]
+                logger.info(f"Extracted mention usernames: {mention_usernames}")
+
+                if mention_usernames:
+                    users = User.objects.filter(username__in=mention_usernames).distinct()
+                    logger.info(f"Found users for mentions: {[u.username for u in users]}")
+                    
+                    if users.exists():
+                        comment.mentions.set(users)
+                        # Create notifications for mentioned users
+                        for user in users:
+                            try:
+                                task_title = comment.task.title or f"Task TB-{comment.task.id}"
+                                message = f"{request.user.username} mentioned you in a comment on task TB-{comment.task.id} ({task_title})"
+                                Notification.objects.create(
+                                    user=user,
+                                    message=message,
+                                    type='task',
+                                    task=comment.task,
+                                    created_by=request.user
+                                )
+                                logger.info(f"Created notification for user: {user.username}")
+                            except Exception as e:
+                                logger.error(f"Failed to create notification for user {user.username}: {str(e)}")
+                    else:
+                        logger.warning("No matching users found for mentions")
+                else:
+                    logger.info("No mentions found in comment")
+
+            return Response({
+                "message": "Comment created successfully!",
+                "data": CommentSerializer(comment, context={'request': request}).data
+            }, status=status.HTTP_201_CREATED)
+        return Response({
+            "message": "Failed to create comment",
+            "errors": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+
+class NotificationCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, task_id):
+        try:
+            task = Task.objects.get(id=task_id)
+        except Task.DoesNotExist:
+            return Response({
+                "message": "Task not found!"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        mentioned_user_ids = request.data.get('mentioned_user_ids', [])
+        comment_id = request.data.get('comment_id', None)
+
+        if not mentioned_user_ids:
+            return Response({
+                "message": "No users mentioned to notify!"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if not comment_id:
+            return Response({
+                "message": "Comment ID is required!"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            users = User.objects.filter(id__in=mentioned_user_ids).distinct()
+            if not users.exists():
+                logger.warning("No matching users found for notification")
+                return Response({
+                    "message": "No valid users found to notify!"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            with transaction.atomic():
+                for user in users:
+                    task_title = task.title or f"Task TB-{task.id}"
+                    message = f"{request.user.username} mentioned you in a comment on task TB-{task.id} ({task_title})"
+                    Notification.objects.create(
+                        user=user,
+                        message=message,
+                        type='task',
+                        task=task,
+                        created_by=request.user
+                    )
+                    logger.info(f"Created notification for user: {user.username}")
+            return Response({
+                "message": "Notifications created successfully!"
+            }, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            logger.error(f"Failed to create notifications: {str(e)}")
+            return Response({
+                "message": "Failed to create notifications",
+                "error": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class CommentListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, task_id):
+        try:
+            task = Task.objects.get(id=task_id)
+        except Task.DoesNotExist:
+            return Response({
+                "message": "Task not found!"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        comments = Comment.objects.filter(task=task).order_by('-created_at')
+        serializer = CommentSerializer(comments, many=True, context={'request': request})
+        return Response({
+            "message": "Comments retrieved successfully!",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+        
+
+class TaskStatusChangesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, task_id):
+        # Check if the task exists
+        try:
+            task = Task.objects.get(id=task_id)
+        except Task.DoesNotExist:
+            return Response({
+                "message": "Task not found!"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Get all status changes for the task
+        status_changes = TaskStatusChange.objects.filter(task=task).order_by('-created_at')
+        
+        # Serialize the status changes
+        serializer = TaskStatusChangeSerializer(status_changes, many=True)
+
+        return Response({
+            "message": "Task status changes retrieved successfully!",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+        
 class UserPendingTasksView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # Get the logged-in user
         user = request.user
-
-        
-        # Current date (only date part)
         current_date = now().date()
 
-        # Fetch tasks for the logged-in user with specified conditions
+        # The key fix is to make sure all conditions are properly grouped with the user filter
         tasks = Task.objects.filter(
-            Q(user=user) & (
-                # Tasks that are ongoing: start_date in the past and due_date in the future
-                Q(due_date__date__gte=current_date) |
-                
-                # Tasks that are overdue: due_date in the past and status is not 'approved'
-                Q(due_date__date__lt=current_date)
+            Q(user=user) &  # This ensures we only get tasks assigned to this user
+            (
+                (
+                    # Tasks that started today or before
+                    Q(start_date__date__lte=current_date) &
+                    # And are due today or in the future
+                    Q(due_date__date__gte=current_date)
+                ) |
+                (
+                    # Or tasks that are overdue
+                    Q(due_date__date__lt=current_date) &
+                    ~Q(status='approved')
+                )
             )
-        )
+        ).distinct()
 
-        # Serialize the tasks
         serializer = TaskSerializer(tasks, many=True)
 
         return Response({
             "message": "Pending tasks retrieved successfully!",
             "data": serializer.data
         }, status=status.HTTP_200_OK)
-        
-
 
 class TaskDetailView(APIView):
     permission_classes = [IsAuthenticated]
@@ -723,6 +1094,87 @@ class TaskDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+
+from datetime import timedelta
+class AllTasksStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        current_date = timezone.now().date()
+        three_days_ago = current_date - timedelta(days=3)
+
+        # Get all tasks (regardless of user) with status filters
+        tasks = Task.objects.filter(
+            Q(status='pending') |  # Pending tasks
+            Q(status='in_review') |  # Tasks in review
+            Q(status='in_progress') |  # Tasks in review
+            (
+                Q(status='approved') &  # Approved tasks
+                Q(approved_date__date__gte=three_days_ago)  # Approved in last 3 days
+            )
+        ).distinct().order_by('-due_date')  # Order by due date (most urgent first)
+
+        # Separate tasks by status
+        pending_tasks = tasks.filter(status='pending')
+        in_review_tasks = tasks.filter(status='in_review')
+        approved_tasks = tasks.filter(status='approved')
+        in_progress_tasks = tasks.filter(status='in_progress')
+
+        # Serialize each group
+        pending_serializer = TaskSerializer(pending_tasks, many=True)
+        in_review_serializer = TaskSerializer(in_review_tasks, many=True)
+        approved_serializer = TaskSerializer(approved_tasks, many=True)
+        in_progress_serializer = TaskSerializer(in_progress_tasks, many=True)
+
+        return Response({
+            "message": "All tasks retrieved successfully!",
+            "data": {
+                "pending_tasks": pending_serializer.data,
+                "in_review_tasks": in_review_serializer.data,
+                "recently_approved_tasks": approved_serializer.data,
+                "in_progress_tasks": in_progress_serializer.data,
+            }
+        }, status=status.HTTP_200_OK) 
+
+
+class ManagerPendingTasksView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        # Check if the user's role is 'Staff'
+        if user.role == 'Staff':
+            return Response({
+                "error": "Permission denied. Staff members are not allowed to create tasks."
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        current_date = now().date()
+
+        # The key fix is to make sure all conditions are properly grouped with the user filter
+        tasks = Task.objects.filter(
+              # This ensures we only get tasks assigned to this user
+            (
+                (
+                    # Tasks that started today or before
+                    Q(start_date__date__lte=current_date) &
+                    # And are due today or in the future
+                    Q(due_date__date__gte=current_date)
+                ) |
+                (
+                    # Or tasks that are overdue
+                    Q(due_date__date__lt=current_date) &
+                    ~Q(status='approved')
+                )
+            )
+        ).distinct()
+
+        serializer = TaskSerializer(tasks, many=True)
+
+        return Response({
+            "message": "Pending tasks retrieved successfully!",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
 
 
 
@@ -805,7 +1257,7 @@ class ChangeTaskStatusView(APIView):
             # Create a notification for the added user
             Notification.objects.create(
                 user=x,
-                message = f"{task.user.username} has been assigned a task to review.",
+                message = f"{task.user.username} has submitted a task for review.",
                 type='task',  # Notification type is 'project'
                 task=task,  # Link the notification to the specific task
                 created_by = task.user
@@ -815,7 +1267,7 @@ class ChangeTaskStatusView(APIView):
             # Create a notification for the added user
             Notification.objects.create(
                 user=x,
-                message = f"{task.user.username} has been assigned a task to review.",
+                message = f"{task.user.username} has submitted a task for review.",
                 type='task',  # Notification type is 'task'
                 task=task,  # Link the notification to the specific task
                 created_by = task.user
@@ -1305,7 +1757,7 @@ class ChangeTicketStatusView(APIView):
                 # Notify the task owner and admins
                 Notification.objects.create(
                     user=task.user,
-                    message=f"{request.user.username} has rejected your task. Reason: {reason}",
+                    message=f"{request.user.username} has rejected your submitted task. Reason: {reason}",
                     type='task',
                     task=task,
                     created_by=request.user
@@ -1423,7 +1875,7 @@ class AddMemberToProjectView(APIView):
         # Create a notification for the added user
         Notification.objects.create(
             user=user_to_add,
-            message = f"{request.user.username} has added you as a member to the '{project.title}' project.",
+            message = f"{request.user.username} has added you as a member of the '{project.title}' project.",
             type='project',  # Notification type is 'project'
             project=project,  # Link the notification to the specific project
             created_by = request.user
@@ -1628,7 +2080,7 @@ class CreateProjectView(APIView):
                     ProjectMember.objects.create(project=project, user=user)
                     Notification.objects.create(
                         user=user,
-                        message = f"{request.user.username} has added you as a member to the '{project.title}' project.",
+                        message = f"{request.user.username} has added you as a member of the '{project.title}' project.",
                         type='project',  # Notification type is 'task'
                         project=project,  # Link the notification to the specific task
                         created_by = request.user
@@ -2223,12 +2675,12 @@ def view_attendance(request):
                     record["punch_in_time"] = attendance.punch_in_time.astimezone(ist).strftime("%I:%M %p") if attendance.punch_in_time else None
                     record["punch_out_time"] = attendance.punch_out_time.astimezone(ist).strftime("%I:%M %p") if attendance.punch_out_time else None
                     record["work_type"] = attendance.work_type
-                    # Determine punch-in status (before/after 9:30 AM IST)
+                    # Determine punch-in status (before/after 10:02 AM IST)
                     if attendance.punch_in_time:
                         punch_in_time = attendance.punch_in_time.astimezone(ist)
-                        if punch_in_time.hour < 9 or (punch_in_time.hour == 9 and punch_in_time.minute <= 30):
+                        if punch_in_time.hour < 10 or (punch_in_time.hour == 10 and punch_in_time.minute <= 2):
                             record["punch_in_status"] = "Early"
-                        elif punch_in_time.hour > 9 or (punch_in_time.hour == 9 and punch_in_time.minute > 30):
+                        elif punch_in_time.hour > 10 or (punch_in_time.hour == 10 and punch_in_time.minute > 2):
                             record["punch_in_status"] = "Late"
                         else:
                             record["punch_in_status"] = "On Time"
@@ -2507,7 +2959,7 @@ def request_leave(request):
             for admin in admins:
                 Notification.objects.create(
                     user=admin,
-                    message=f"{user.username} has requested for leave on {leave_date} {'(Half Day - ' + leave.half_day_option + ')' if leave.half_day_option else ''}",
+                    message=f"{user.username} has requested for a leave on {leave_date} {'(Half Day - ' + leave.half_day_option + ')' if leave.half_day_option else ''}",
                     type='leave',
                     leave=leave,
                     created_by=user
@@ -2517,7 +2969,7 @@ def request_leave(request):
             for manager in managers:
                 Notification.objects.create(
                     user=manager,
-                    message=f"{user.username} has requested for leave on {leave_date} {'(Half Day - ' + leave.half_day_option + ')' if leave.half_day_option else ''}",
+                    message=f"{user.username} has requested for a leave on {leave_date} {'(Half Day - ' + leave.half_day_option + ')' if leave.half_day_option else ''}",
                     type='leave',
                     leave=leave,
                     created_by=user
@@ -2652,7 +3104,7 @@ def leave_detail(request, leave_id):
             leave_date_ist = timezone.make_aware(timezone.datetime.combine(leave.date, timezone.datetime.min.time()), ist)
             Notification.objects.create(
                 user=leave.user,
-                message=f"Your leave request on {leave_date_ist.date()} {'(Half Day - ' + leave.half_day_option + ')' if leave.half_day_option else ''} has been {new_status.lower()}.",
+                message=f"Your leave request for {leave_date_ist.date()} {'(Half Day - ' + leave.half_day_option + ')' if leave.half_day_option else ''} has been {new_status.lower()}.",
                 type='leave',
                 leave=leave,
                 created_by=request_user
@@ -2735,3 +3187,76 @@ def check_punch_status(request):
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=500)
     return JsonResponse({"error": "Invalid request method"}, status=405)
+
+
+
+
+
+
+class LeaveRequests(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user  # Get the logged-in user
+
+        # Check if the user's role is 'Staff'
+        if user.role == 'Staff':
+            return Response({
+                "error": "Permission denied. Staff members are not allowed to view leave requests."
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        # Fetch all leave requests
+        leaves = Leave.objects.all()
+
+        # Serialize the data
+        serializer = LeaveSerializer(leaves, many=True)
+        
+        return Response({
+            "message": "Leave requests retrieved successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+
+
+class AttendanceStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    print("Coming Here")
+    
+    def get(self, request):
+        user = request.user
+        
+        today = timezone.now().date()
+        
+        try:
+            attendance = Attendance.objects.get(user=user, date=today)
+            
+            response_data = {
+                'has_punched_in': attendance.punch_in_time is not None,
+                'punch_in_time': attendance.punch_in_time.isoformat() if attendance.punch_in_time else None,
+                'has_punched_out': attendance.punch_out_time is not None,
+                'punch_out_time': attendance.punch_out_time.isoformat() if attendance.punch_out_time else None,
+                'current_status': attendance.status,
+                'work_type': attendance.work_type,
+                'face_verified': attendance.face_verified,
+                'status_punchin': attendance.status_punchin,
+                'status_punchout': attendance.status_punchout,
+                'date': today.isoformat()
+            }
+            
+            return JsonResponse(response_data)
+            
+        except Attendance.DoesNotExist:
+            return JsonResponse({
+                'has_punched_in': False,
+                'punch_in_time': None,
+                'has_punched_out': False,
+                'punch_out_time': None,
+                'current_status': 'Absent',
+                'work_type': None,
+                'face_verified': False,
+                'status_punchin': 'Absent',
+                'status_punchout': 'Absent',
+                'date': today.isoformat()
+            })

@@ -251,6 +251,12 @@ class ProjectImage(models.Model):
 
 
 
+class Client(models.Model):
+    title = models.CharField(max_length=255, unique=True)
+
+    def __str__(self):
+        return self.title
+
 
 class Task(models.Model):
     PRIORITY_CHOICES = [
@@ -260,15 +266,17 @@ class Task(models.Model):
     ]
     STATUS_CHOICES = [
         ('pending', 'Pending'),
+        ('in_progress', 'In Progress'),
         ('in_review', 'In Review'),
         ('approved', 'Approved'),
     ]
 
 
     
+    
     title = models.CharField(max_length=255)
     description = models.TextField()
-    due_date = models.DateTimeField()
+    due_date = models.DateTimeField(null=True, blank=True)
     start_date = models.DateTimeField(null=True, blank=True)
     priority = models.CharField(max_length=6, choices=PRIORITY_CHOICES, default='medium')
     user = models.ForeignKey(User, related_name='tasks', on_delete=models.CASCADE)  # User who the task is assigned to
@@ -276,16 +284,46 @@ class Task(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_ticket = models.BooleanField(default=False)  # Added boolean field for is_ticket
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='pending')
     review_date = models.DateTimeField(null=True, blank=True)
     approved_date = models.DateTimeField(null=True, blank=True)
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="projects", null=True, blank=True)
-
+    client = models.ForeignKey(Client, on_delete=models.SET_DEFAULT, default='', blank=True, null=True, related_name='tasks')
 
     def __str__(self):
         return self.title
 
 
+
+
+
+class Comment(models.Model):
+    content = models.TextField()
+    commented_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='comments'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    task = models.ForeignKey(
+        'Task',
+        on_delete=models.CASCADE,
+        related_name='comments'
+    )
+    mentions = models.ManyToManyField(
+        User,
+        related_name='mentioned_in_comments',
+        blank=True
+    )
+
+    def __str__(self):
+        return f"Comment by {self.commented_by.username} on Task {self.task.id}"
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['task', 'created_at']),
+        ]
+        ordering = ['-created_at']
 
 
 
@@ -300,17 +338,18 @@ class TaskStatusChange(models.Model):
     STATUS_CHOICES = [
         ('pending', 'Pending'),
         ('in_review', 'In Review'),
+        ('in_progress', 'In Progress'),
         ('approved', 'Approved'),
     ]
 
     task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="tasks")
-    due_date = models.DateTimeField()
+    due_date = models.DateTimeField(null=True, blank=True)
     start_date = models.DateTimeField(null=True, blank=True)
     priority = models.CharField(max_length=6, choices=PRIORITY_CHOICES, default='medium')
     created_at = models.DateTimeField(auto_now_add=True)
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='pending')
     reason = models.TextField(null=True, blank=True)
-    
+    changed_by = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
     
     
     def __str__(self):

@@ -288,7 +288,7 @@ class UserSerializerComment(serializers.ModelSerializer):
 
 
 class CommentSerializer(serializers.ModelSerializer):
-    commented_by = UserSerializerComment(read_only=True)
+    commented_by = UserSerializer(read_only=True)
     mentions = UserSerializerComment(many=True, read_only=True)
     content = serializers.CharField(max_length=1000, trim_whitespace=True)
 

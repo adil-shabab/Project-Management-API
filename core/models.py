@@ -350,6 +350,7 @@ class TaskStatusChange(models.Model):
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='pending')
     reason = models.TextField(null=True, blank=True)
     changed_by = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
+    comment = models.TextField(null=True, blank=True)
     
     
     def __str__(self):

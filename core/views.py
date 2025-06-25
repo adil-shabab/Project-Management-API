@@ -745,9 +745,211 @@ class AdminPendingInReviewTasksView(APIView):
 
 
 
+class UpdateTaskView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, task_id):
+        task = get_object_or_404(Task, id=task_id)
+
+        user = request.user
+        is_admin_or_manager = user.role in ['Admin', 'Manager']
+
+        # Check permission
+        if task.user != user and not is_admin_or_manager:
+            return Response({"message": "You don't have permission to edit this task."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        # Clone data for mutation
+        update_data = request.data.copy()
+
+        # Only Admin/Manager can change client
+        if not is_admin_or_manager and 'client' in update_data:
+            update_data.pop('client')
+
+        # Serialize and validate
+        serializer = TaskSerializerNew(
+            task,
+            data=update_data,
+            partial=True,
+            context={'request': request, 'user': user}
+        )
+
+        if serializer.is_valid():
+            updated_task = serializer.save()
+
+            # Add new images
+            new_images = request.FILES.getlist('images')
+            for img in new_images:
+                TaskImage.objects.create(task=updated_task, image=img)
+
+            # Remove images if specified
+            delete_ids = update_data.get('delete_image_ids', [])
+            if isinstance(delete_ids, str):
+                delete_ids = delete_ids.split(',')
+
+            for img_id in delete_ids:
+                try:
+                    TaskImage.objects.get(id=img_id, task=task).delete()
+                except TaskImage.DoesNotExist:
+                    continue
+
+            return Response({
+                "message": "Task updated successfully.",
+                "data": TaskSerializerNew(updated_task, context={'request': request}).data
+            }, status=status.HTTP_200_OK)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 
+
+
+
+
+class UpdateTaskView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, task_id):
+        task = get_object_or_404(Task, id=task_id)
+
+        user = request.user
+        is_admin_or_manager = user.role in ['Admin', 'Manager']
+
+        # Check permission
+        if task.user != user and not is_admin_or_manager:
+            return Response({"message": "You don't have permission to edit this task."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        # Clone data for mutation
+        update_data = request.data.copy()
+
+        # Only Admin/Manager can change client
+        if not is_admin_or_manager and 'client' in update_data:
+            update_data.pop('client')
+
+        # Serialize and validate
+        serializer = TaskSerializerNew(
+            task,
+            data=update_data,
+            partial=True,
+            context={'request': request, 'user': user}
+        )
+
+        if serializer.is_valid():
+            updated_task = serializer.save()
+
+            # Add new images
+            new_images = request.FILES.getlist('images')
+            for img in new_images:
+                TaskImage.objects.create(task=updated_task, image=img)
+
+            # Remove images if specified
+            delete_ids = update_data.get('delete_image_ids', [])
+            if isinstance(delete_ids, str):
+                delete_ids = delete_ids.split(',')
+
+            for img_id in delete_ids:
+                try:
+                    TaskImage.objects.get(id=img_id, task=task).delete()
+                except TaskImage.DoesNotExist:
+                    continue
+
+            return Response({
+                "message": "Task updated successfully.",
+                "data": TaskSerializerNew(updated_task, context={'request': request}).data
+            }, status=status.HTTP_200_OK)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+class DeleteTaskView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        try:
+            task = Task.objects.get(id=pk)
+        except Task.DoesNotExist:
+            return Response(
+                {"detail": "Task not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # ❌ Validation: Staff are not allowed to delete tasks
+        if request.user.role == 'Staff':
+            return Response(
+                {"detail": "You don’t have permission to delete this task."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # 🗑 Delete task (and its related images)
+        for img in task.images.all():
+            img.image.delete(save=False)
+        task.delete()
+
+        return Response(
+            {"message": "Task deleted successfully."},
+            status=status.HTTP_200_OK
+        )
+
+class EditTaskView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    # PUT  = full replace, PATCH = partial update --------------------------
+    def put(self, request, pk):  # <== this pk must match the URL param
+        return self._update(request, pk, partial=False)
+
+        
+    def patch(self, request, pk, *args, **kwargs):
+        return self._update(request, pk, partial=True)
+
+    # ----------------------------------------------------------------------
+    def _update(self, request, pk, *, partial):
+        try:
+            task = Task.objects.get(id=pk)
+        except Task.DoesNotExist:
+            return Response(
+                {"detail": "Task not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # ──────────── Permission guard ────────────
+        if not (request.user.role != 'Staff' or task.user == request.user):
+            return Response(
+                {"detail": "You don’t have permission to edit this task."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        # ──────────── Delete previous images ────────────
+        for img in task.images.all():
+            img.image.delete(save=False)     # removes the file itself
+        task.images.all().delete()            # removes DB rows
+
+        # ──────────── Run serializer ────────────
+        serializer = TaskSerializerNew(
+            task,
+            data=request.data,
+            context={"request": request, "user": request.user},
+            partial=partial,
+        )
+
+        if serializer.is_valid():
+            serializer.save()                 # handles new images if provided
+            return Response(
+                {
+                    "message": "Task updated successfully!",
+                    "data": serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+
+
+        
 class TaskStatusUpdateView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -788,32 +990,131 @@ class TaskStatusUpdateView(APIView):
             'review_date': task.review_date
         }
 
-        # Handle status-specific logic
-        if new_status == 'in_progress':
-            # When coming from approved, clear approval dates
-            if task.status == 'approved':
-                task.approved_date = None
-            
-            # Set start date if coming from pending or approved
-            if task.status in ['pending', 'approved']:
-                task.start_date = timezone.now()
-            
-            # Allow due date update if provided
-            if new_due_date:
-                task.due_date = new_due_date
-
-        elif new_status == 'pending':
+        if new_status == 'pending':
             # Clear all dates when moving to pending
             task.start_date = None
             task.due_date = None
             task.review_date = None
             task.approved_date = None
 
+            # Set start date if coming from pending or approved
+            if task.status in ['in_review']:
+                task.start_date = timezone.now()
+                task__title = task.title or f"Task TB-{task.id}"
+                if request.user.role != 'Staff' :
+                    Notification.objects.create(
+                        user=task.user,
+                        message = f"{request.user.username} has Rejected your {task__title}. Reason : {reason}",
+                        type='task',  # Notification type is 'project'
+                        task=task,  # Link the notification to the specific task
+                        created_by = request.user
+                    )
+            # Set start date if coming from pending or approved
+
+            if task.status in ['approved']:
+                task.start_date = timezone.now()
+                task__title = task.title or f"Task TB-{task.id}"
+                if request.user.role != 'Staff' :
+                    Notification.objects.create(
+                        user=task.user,
+                        message = f"{request.user.username} has Reopned your {task__title}. Reason : {reason}",
+                        type='task',  # Notification type is 'project'
+                        task=task,  # Link the notification to the specific task
+                        created_by = request.user
+                    )
+
+
+        # Handle status-specific logic
+        elif new_status == 'in_progress':
+            # When coming from approved, clear approval dates
+            if task.status == 'approved':
+                task.approved_date = None
+                task.review_date = None
+
+                task__title = task.title or f"Task TB-{task.id}"
+                if request.user.role != 'Staff' :
+                    Notification.objects.create(
+                        user=task.user,
+                        message = f"{request.user.username} has Rejected your {task__title}. Reason : {reason}",
+                        type='task',  # Notification type is 'project'
+                        task=task,  # Link the notification to the specific task
+                        created_by = request.user
+                    )
+            
+            # Set start date if coming from pending or approved
+            if task.status in ['pending']:
+                task.start_date = timezone.now()
+
+            # Set start date if coming from pending or approved
+            if task.status in ['in_review']:
+                task.review_date = None
+                task.start_date = timezone.now()
+                task__title = task.title or f"Task TB-{task.id}"
+                if request.user.role != 'Staff' :
+                    Notification.objects.create(
+                        user=task.user,
+                        message = f"{request.user.username} has Rejected your {task__title}. Reason : {reason}",
+                        type='task',  # Notification type is 'project'
+                        task=task,  # Link the notification to the specific task
+                        created_by = request.user
+                    )
+            # Set start date if coming from pending or approved
+
+
+            # Allow due date update if provided
+            if new_due_date:
+                task.due_date = new_due_date
+
+
         elif new_status == 'in_review':
             task.review_date = timezone.now()
             # If coming from approved, clear approved date
             if task.status == 'approved':
                 task.approved_date = None
+                task__title = task.title or f"Task TB-{task.id}"
+                if request.user.role != 'Staff' :
+                    Notification.objects.create(
+                        user=task.user,
+                        message = f"{request.user.username} has Moved your {task__title} from Approved to In Review",
+                        type='task',  # Notification type is 'project'
+                        task=task,  # Link the notification to the specific task
+                        created_by = request.user
+                    )
+
+                    
+            if task.status == 'in_progress':
+                task.review_date = timezone.now()
+                task__title = task.title or f"Task TB-{task.id}"
+                managers = User.objects.filter(role = 'Manager')
+                Admins = User.objects.filter(role = 'Admin')
+
+
+                for x in managers:
+                    if request.user.role == 'Staff' :
+                        Notification.objects.create(
+                            user=x,
+                            message = f"{task.user.username} has submitted {task__title} for review.",
+                            type='task',  # Notification type is 'project'
+                            task=task,  # Link the notification to the specific task
+                            created_by = task.user
+                        )
+
+                for x in Admins:
+                    if request.user.role == 'Staff' :
+                        Notification.objects.create(
+                            user=x,
+                            message = f"{task.user.username} has submitted {task__title} for review.",
+                            type='task',  # Notification type is 'project'
+                            task=task,  # Link the notification to the specific task
+                            created_by = task.user
+                        )
+
+
+
+            # Set start date if coming from pending or approved
+            if task.status in ['pending']:
+                task.start_date = timezone.now()
+
 
         elif new_status == 'approved':
             if not (request.user.role in ['Manager', 'Admin']):
@@ -821,6 +1122,18 @@ class TaskStatusUpdateView(APIView):
                     {"message": "Only managers/admins can approve tasks."},
                     status=status.HTTP_403_FORBIDDEN
                 )
+            
+            task__title = task.title or f"Task TB-{task.id}"
+
+            Notification.objects.create(
+                user=task.user,
+                message = f"{request.user.username} has Approved your {task__title}",
+                type='task',  # Notification type is 'project'
+                task=task,  # Link the notification to the specific task
+                created_by = request.user
+            )
+
+
             task.approved_date = timezone.now()
 
         # Update task status
@@ -853,7 +1166,7 @@ class TaskStatusUpdateView(APIView):
 
     def _is_valid_transition(self, current_status, new_status):
         valid_transitions = {
-            'pending': ['in_progress'],
+            'pending': ['in_progress', 'in_review'],
             'in_progress': ['pending', 'in_review'],
             'in_review': ['pending', 'approved', 'in_progress'],
             'approved': ['pending', 'in_progress', 'in_review']

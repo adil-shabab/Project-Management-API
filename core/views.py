@@ -1139,9 +1139,13 @@ class TaskStatusUpdateView(APIView):
         # Update task status
         task.status = new_status
         task.save()
+        
 
         # Log the status change
         self._log_status_change(task, current_state, request.user, reason)
+
+
+
 
         return Response(
             {
